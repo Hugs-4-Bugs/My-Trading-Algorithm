@@ -1,0 +1,130 @@
+//@version=6
+indicator("FX/CRYPTO STRUCTURE SCALPER PRO", overlay=true, max_labels_count = 500)
+
+// ============================================
+// CONFIGURATION
+// ============================================
+// Colors
+color_bullish   = color.new(#26A69A, 0)
+color_bearish   = color.new(#EF5350, 0)
+color_neutral   = color.new(#78909C, 0)
+color_liquidity = color.new(#FF9800, 80)
+color_execution = color.new(#2196F3, 0)
+
+// Settings
+atr_period       = input.int(14, "ATR Period", minval=5, maxval=50)
+min_displacement = input.float(1.0, "Min Displacement (ATR%)", minval=0.5, maxval=3.0) / 100
+show_liquidity   = input.bool(true, "Show Liquidity Levels")
+show_execution   = input.bool(true, "Show Execution Zones")
+show_sessions    = input.bool(true, "Show Session Colors")
+
+// ============================================
+// 1. FAST STRUCTURE ENGINE
+// ============================================
+pivot_high = ta.pivothigh(3, 3)
+pivot_low  = ta.pivotlow(3, 3)
+
+var float latest_high = na
+var float latest_low  = na
+
+if not na(pivot_high)
+    latest_high := pivot_high
+
+if not na(pivot_low)
+    latest_low := pivot_low
+
+// ============================================
+// 2. LIQUIDITY ENGINE
+// ============================================
+// Security calls fixed for v6 stability
+prior_day_high = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+prior_day_low  = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+session_high   = ta.highest(high, 24)
+session_low    = ta.lowest(low, 24)
+round_level    = math.round(close / 0.0010) * 0.0010
+
+var bool liquidity_swept = false
+var float swept_level    = na
+var int swept_bar        = 0
+
+near_prior_high   = math.abs(high - prior_day_high) / prior_day_high <= 0.0003
+near_prior_low    = math.abs(low - prior_day_low) / prior_day_low <= 0.0003
+near_session_high = math.abs(high - session_high) / session_high <= 0.0003
+near_session_low  = math.abs(low - session_low) / session_low <= 0.0003
+near_round        = math.abs(close - round_level) / round_level <= 0.0003
+
+is_sweep = near_prior_high or near_prior_low or near_session_high or near_session_low or near_round
+
+if is_sweep and not liquidity_swept
+    liquidity_swept := true
+    swept_level     := near_prior_high ? prior_day_high : near_prior_low ? prior_day_low : near_session_high ? session_high : near_session_low ? session_low : round_level
+    swept_bar       := bar_index
+    label.new(bar_index, swept_level, "•", color=color_liquidity, textcolor=color.white, style=label.style_label_center, size=size.normal)
+
+if bar_index - swept_bar > 10
+    liquidity_swept := false
+
+// ============================================
+// 3. CHoCH ENGINE
+// ============================================
+bearish_choch = not na(latest_low) and ta.crossunder(close, latest_low)
+bullish_choch = not na(latest_high) and ta.crossover(close, latest_high)
+
+if bearish_choch and liquidity_swept
+    label.new(bar_index, latest_low, "CH↓", color=color_bearish, textcolor=color.white, style=label.style_label_down)
+    line.new(bar_index - 2, latest_low, bar_index, latest_low, color=color_bearish, style=line.style_dashed)
+
+if bullish_choch and liquidity_swept
+    label.new(bar_index, latest_high, "CH↑", color=color_bullish, textcolor=color.white, style=label.style_label_up)
+    line.new(bar_index - 2, latest_high, bar_index, latest_high, color=color_bullish, style=line.style_dashed)
+
+// ============================================
+// 4. DISPLACEMENT ENGINE
+// ============================================
+atr_value    = ta.atr(atr_period)
+candle_body  = math.abs(close - open)
+candle_range = high - low
+body_ratio   = candle_range > 0 ? candle_body / candle_range : 0
+
+valid_bullish_disp = body_ratio > 0.6 and close > open and (close - open) > (atr_value * min_displacement)
+valid_bearish_disp = body_ratio > 0.6 and close < open and (open - close) > (atr_value * min_displacement)
+
+// ============================================
+// 5. EXECUTION ZONES
+// ============================================
+execution_bullish = liquidity_swept and bullish_choch and valid_bullish_disp
+execution_bearish = liquidity_swept and bearish_choch and valid_bearish_disp
+
+if show_execution and execution_bullish
+    label.new(bar_index, low, "BUY\nZONE", color=color_execution, textcolor=color.white, style=label.style_label_up, size=size.large)
+
+if show_execution and execution_bearish
+    label.new(bar_index, high, "SELL\nZONE", color=color_execution, textcolor=color.white, style=label.style_label_down, size=size.large)
+
+// ============================================
+// 6. SESSION FILTER (FIXED FOR V6)
+// ============================================
+// Getting hour in UTC properly
+hour_utc = hour(time, "UTC")
+
+london_session = hour_utc >= 7 and hour_utc < 16
+ny_session     = hour_utc >= 13 and hour_utc < 22
+asian_session  = hour_utc >= 22 or hour_utc < 7
+
+// ============================================
+// VISUAL OUTPUT
+// ============================================
+plot(prior_day_high, "PDH", show_liquidity ? color.new(color_liquidity, 70) : color.new(color_liquidity, 100), 1, plot.style_circles)
+plot(prior_day_low,  "PDL", show_liquidity ? color.new(color_liquidity, 70) : color.new(color_liquidity, 100), 1, plot.style_circles)
+
+session_color = show_sessions and london_session ? color.new(#FF9800, 90) : show_sessions and ny_session ? color.new(#2196F3, 90) : show_sessions and asian_session ? color.new(#9C27B0, 90) : na
+bgcolor(session_color, title="Session Highlight")
+
+// ============================================
+// INFO LABEL
+// ============================================
+if barstate.islast
+    var label info_label = label.new(bar_index, high, "", color=color.gray, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
+    session_text = london_session ? "LONDON" : ny_session ? "NEW YORK" : asian_session ? "ASIAN" : "OFF"
+    label_text = "FX/CRYPTO SCALPER\nSession: " + session_text + "\nATR: " + str.tostring(atr_value, "#.#####") + "\nLiquidity Swept: " + str.tostring(liquidity_swept)
+    label.set_text(info_label, label_text)
