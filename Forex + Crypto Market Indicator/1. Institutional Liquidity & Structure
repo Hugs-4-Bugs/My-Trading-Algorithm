@@ -1,0 +1,67 @@
+//@version=6
+indicator("Institutional Liquidity & Structure [FX/CRYPTO] v6", overlay=true, max_labels_count=500)
+
+// ==========================================
+// 1. INPUTS
+// ==========================================
+lookback    = input.int(5, "Swing Sensitivity", minval=2)
+atr_mult    = input.float(1.2, "Displacement Multiplier", minval=0.5)
+show_sess   = input.bool(true, "Show Session Background")
+
+// Session Logic (Explicit Boolean)
+is_london = not na(time(timeframe.period, "0800-1600:23456"))
+is_ny     = not na(time(timeframe.period, "1300-2100:23456"))
+session_color = is_ny ? color.new(color.blue, 90) : (is_london ? color.new(color.orange, 90) : na)
+bgcolor(show_sess ? session_color : na)
+
+// ==========================================
+// 2. STRUCTURE & LIQUIDITY
+// ==========================================
+var float hi = na
+var float lo = na
+
+p_hi = ta.pivothigh(lookback, lookback)
+p_lo = ta.pivotlow(lookback, lookback)
+
+if not na(p_hi)
+    hi := p_hi
+if not na(p_lo)
+    lo := p_lo
+
+// Displacement (Momentum)
+atr = ta.atr(14)
+is_displaced = math.abs(close - open) > (atr * atr_mult)
+
+// Liquidity Sweeps
+sweep_high = high > hi and close < hi
+sweep_low  = low < lo and close > lo
+
+// ==========================================
+// 3. CHoCH & EXECUTION
+// ==========================================
+var bool sweep_active = false
+if sweep_high or sweep_low
+    sweep_active := true
+
+bullish_choch = sweep_active and ta.crossover(close, hi) and is_displaced
+bearish_choch = sweep_active and ta.crossunder(close, lo) and is_displaced
+
+// ==========================================
+// 4. VISUALS
+// ==========================================
+// Liquidity Dots
+plotshape(sweep_high, "High Sweep", shape.circle, location.abovebar, color.orange, size=size.tiny)
+plotshape(sweep_low, "Low Sweep", shape.circle, location.belowbar, color.orange, size=size.tiny)
+
+// Execution Labels
+if bullish_choch
+    label.new(bar_index, low, "EXECUTE LONG", color=color.green, textcolor=color.white, style=label.style_label_up)
+    sweep_active := false
+
+if bearish_choch
+    label.new(bar_index, high, "EXECUTE SHORT", color=color.red, textcolor=color.white, style=label.style_label_down)
+    sweep_active := false
+
+// Master Lines for Visual Confirmation
+plot(hi, "Liquidity Ceiling", color.new(color.gray, 70), 1, plot.style_linebr)
+plot(lo, "Liquidity Floor", color.new(color.gray, 70), 1, plot.style_linebr)
