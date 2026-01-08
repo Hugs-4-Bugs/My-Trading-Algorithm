@@ -1,0 +1,368 @@
+//@version=6
+indicator("INR Structure + Liquidity Bias (India)", overlay=true, max_labels_count=500, max_lines_count=500)
+
+//========================
+//===== USER INPUTS ======
+//========================
+
+// Timeframe / Structure
+useHigherTF      = input.bool(true,  "Use higher timeframe structure (recommended)")
+htf              = input.timeframe("60", "Higher timeframe for structure")
+swingLeft        = input.int(5, "Swing left bars (slow)", minval=2, maxval=20)
+swingRight       = input.int(5, "Swing right bars (slow)", minval=2, maxval=20)
+
+// Liquidity zones
+showPDH_PDL      = input.bool(true, "Show Prior Day High/Low")
+showWkHL         = input.bool(true, "Show Weekly High/Low")
+showPsych        = input.bool(true, "Show Psychological round levels")
+roundStep        = input.int(100, "Round level step (index)", minval=25)
+
+// Displacement
+displATRlen      = input.int(14,  "ATR length for displacement", minval=5, maxval=50)
+displATRmult     = input.float(2, "ATR multiple (range expansion)", minval=1.0, maxval=4.0)
+
+// CHoCH / Bias
+minTrendSwings   = input.int(2, "Minimum swings in one direction before CHoCH", minval=1, maxval=5)
+rangeLookback    = input.int(30, "Bars to detect range", minval=10, maxval=200)
+rangeThreshold   = input.float(0.2, "Range % of ATR vs total range", minval=0.05, maxval=1.0)
+
+// Visual
+colBull          = color.new(color.teal, 0)
+colBear          = color.new(color.red,  0)
+colRange         = color.new(color.silver, 0)
+colLiquidity     = color.new(color.orange, 30)
+colTrap          = color.new(color.red, 0)
+colProbe         = color.new(color.gray, 0)
+
+txtSizeBias      = size.normal
+
+//========================
+//===== BASIC SERIES =====
+//========================
+
+var float htfHigh = na
+var float htfLow  = na
+var float htfClose= na
+var float htfOpen = na
+
+if useHigherTF
+    htfHigh  := request.security(syminfo.tickerid, htf, high)
+    htfLow   := request.security(syminfo.tickerid, htf, low)
+    htfClose := request.security(syminfo.tickerid, htf, close)
+    htfOpen  := request.security(syminfo.tickerid, htf, open)
+else
+    htfHigh  := high
+    htfLow   := low
+    htfClose := close
+    htfOpen  := open
+
+atr = ta.atr(displATRlen)
+
+//==============================
+//===== STRUCTURE ENGINE =======
+//==============================
+
+// Get the actual pivot prices (float or na)
+pivotHighPrice = ta.pivothigh(htfHigh, swingLeft, swingRight)
+pivotLowPrice  = ta.pivotlow(htfLow, swingLeft, swingRight)
+
+// Create boolean signals for "Event happened this bar"
+swingH = not na(pivotHighPrice)
+swingL = not na(pivotLowPrice)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+var bool  lastSwingWasHigh = false
+
+if swingH
+    lastSwingHigh := pivotHighPrice
+    lastSwingWasHigh := true
+
+if swingL
+    lastSwingLow := pivotLowPrice
+    lastSwingWasHigh := false
+
+plotshape(swingH, title="Major Swing High", style=shape.triangledown, location=location.abovebar, color=color.new(colBear, 0), size=size.tiny, text="SH")
+plotshape(swingL, title="Major Swing Low",  style=shape.triangleup,   location=location.belowbar, color=color.new(colBull, 0), size=size.tiny, text="SL")
+
+//==============================
+//========= LIQUIDITY ==========
+//==============================
+
+var float pdh = na
+var float pdl = na
+var float wh  = na
+var float wl  = na
+
+newDayChange  = ta.change(time("D"))
+newWeekChange = ta.change(time("W"))
+
+newDay  = newDayChange  != 0
+newWeek = newWeekChange != 0
+
+var float dayHigh  = na
+var float dayLow   = na
+var float weekHigh = na
+var float weekLow  = na
+
+if newDay
+    pdh := dayHigh
+    pdl := dayLow
+    dayHigh := high
+    dayLow  := low
+else
+    dayHigh := na(dayHigh) ? high : math.max(dayHigh, high)
+    dayLow  := na(dayLow)  ? low  : math.min(dayLow,  low)
+
+if newWeek
+    wh := weekHigh
+    wl := weekLow
+    weekHigh := high
+    weekLow  := low
+else
+    weekHigh := na(weekHigh) ? high : math.max(weekHigh, high)
+    weekLow  := na(weekLow)  ? low  : math.min(weekLow,  low)
+
+// Plot prior day / week levels
+lineStyle = line.style_dotted
+
+var line l_pdh = na
+var line l_pdl = na
+var line l_wh  = na
+var line l_wl  = na
+
+if showPDH_PDL and newDay
+    l_pdh := line.new(bar_index, pdh, bar_index, pdh, xloc=xloc.bar_index, extend=extend.right, color=colLiquidity, style=lineStyle)
+    l_pdl := line.new(bar_index, pdl, bar_index, pdl, xloc=xloc.bar_index, extend=extend.right, color=colLiquidity, style=lineStyle)
+
+if showWkHL and newWeek
+    l_wh := line.new(bar_index, wh, bar_index, wh, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.blue, 60), style=lineStyle)
+    l_wl := line.new(bar_index, wl, bar_index, wl, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.blue, 60), style=lineStyle)
+
+// Psychological round levels
+var float baseRound = na
+if na(baseRound)
+    baseRound := math.round(close / roundStep) * roundStep
+
+nearestRound = math.round(close / roundStep) * roundStep
+belowRound   = nearestRound - roundStep
+aboveRound   = nearestRound + roundStep
+
+var line l_round_mid = na
+var line l_round_lo  = na
+var line l_round_hi  = na
+
+roundChange = ta.change(nearestRound)
+changedRound = roundChange != 0
+
+if showPsych and changedRound
+    l_round_mid := line.new(bar_index, nearestRound, bar_index, nearestRound, xloc=xloc.bar_index, extend=extend.right, color=color.new(color.gray, 80), style=line.style_dashed)
+    l_round_lo  := line.new(bar_index, belowRound,  bar_index, belowRound,  xloc=xloc.bar_index, extend=extend.right, color=color.new(color.gray, 90), style=line.style_dashed)
+    l_round_hi  := line.new(bar_index, aboveRound,  bar_index, aboveRound,  xloc=xloc.bar_index, extend=extend.right, color=color.new(color.gray, 90), style=line.style_dashed)
+
+//==============================
+//=== LIQUIDITY PROBE / TRAP ===
+//==============================
+
+probeToleranceTicks = atr * 0.25
+
+isTouch(level) =>
+    not na(level) and high >= level and low <= level
+
+plotshape(isTouch(pdh), title="PDH probe", style=shape.circle, size=size.tiny, location=location.absolute, color=colProbe)
+plotshape(isTouch(pdl), title="PDL probe", style=shape.circle, size=size.tiny, location=location.absolute, color=colProbe)
+
+trapLong  = false
+trapShort = false
+
+prevClose = close[1]
+prevHigh  = high[1]
+prevLow   = low[1]
+
+tookOutLow(level) =>
+    not na(level) and low < level and close > level and prevClose > level
+
+tookOutHigh(level) =>
+    not na(level) and high > level and close < level and prevClose < level
+
+lowLiquTouched  = tookOutLow(pdl) or tookOutLow(wl) or tookOutLow(belowRound)
+highLiquTouched = tookOutHigh(pdh) or tookOutHigh(wh) or tookOutHigh(aboveRound)
+
+trapLong  := lowLiquTouched
+trapShort := highLiquTouched
+
+if trapLong
+    label.new(bar_index, low, "Liquidity TRAP (long)\nStops cleaned below obvious low", style=label.style_label_up, color=color.new(colBull, 0), textcolor=color.white, size=size.tiny)
+if trapShort
+    label.new(bar_index, high, "Liquidity TRAP (short)\nStops cleaned above obvious high", style=label.style_label_down, color=color.new(colBear, 0), textcolor=color.white, size=size.tiny)
+
+//==============================
+//====== RANGE DETECTION =======
+//==============================
+
+hhRange    = ta.highest(htfHigh, rangeLookback)
+llRange    = ta.lowest(htfLow,  rangeLookback)
+totalRange = hhRange - llRange
+atrAvg     = ta.sma(atr, rangeLookback)
+isRange    = totalRange <= atrAvg * (rangeLookback * rangeThreshold)
+
+//==============================
+//======== DISPLACEMENT =======
+//==============================
+
+trueRange = high - low
+body      = math.abs(close - open)
+
+isDisplacement = body > atr * displATRmult and trueRange > atr * displATRmult and not isRange
+
+nearLvl(level, factor) =>
+    not na(level) and math.abs(close - level) <= atr * factor
+
+nearAnyLiquidity =
+      nearLvl(pdh, 1.0)
+   or nearLvl(pdl, 1.0)
+   or nearLvl(wh,  1.0)
+   or nearLvl(wl,  1.0)
+   or nearLvl(nearestRound, 1.0)
+   or nearLvl(aboveRound,   1.0)
+   or nearLvl(belowRound,   1.0)
+
+displacementBar = isDisplacement and nearAnyLiquidity
+
+bgcolor(displacementBar ? color.new(color.yellow, 90) : na)
+
+//==============================
+//=========== CHoCH ============
+//==============================
+
+var int  structDir       = 0        // +1 bull, -1 bear
+var int  sameDirSwings   = 0
+var bool chochTriggered  = false
+var int  lastCHoCHBar    = na
+
+protectedHigh = lastSwingHigh
+protectedLow  = lastSwingLow
+
+brokeProtectedHigh = not na(protectedHigh) and close > protectedHigh and close[1] <= protectedHigh
+brokeProtectedLow  = not na(protectedLow)  and close < protectedLow  and close[1] >= protectedLow
+
+validCHoCHContext = not isRange and displacementBar
+
+minBarsBetweenCHoCH = swingLeft + swingRight + 5
+enoughBarsSinceLast = na(lastCHoCHBar) or (bar_index - lastCHoCHBar > minBarsBetweenCHoCH)
+
+newCHoCHBull = brokeProtectedHigh and validCHoCHContext and enoughBarsSinceLast and structDir == -1 and sameDirSwings >= minTrendSwings
+newCHoCHBear = brokeProtectedLow  and validCHoCHContext and enoughBarsSinceLast and structDir ==  1 and sameDirSwings >= minTrendSwings
+
+if swingH
+    if structDir == -1
+        sameDirSwings += 1
+    else
+        sameDirSwings := 1
+    structDir := -1
+
+if swingL
+    if structDir == 1
+        sameDirSwings += 1
+    else
+        sameDirSwings := 1
+    structDir := 1
+
+if newCHoCHBull
+    label.new(bar_index, close, "CHoCH → Bull\nProtected high taken with displacement", style=label.style_label_up, color=color.new(colBull, 0), textcolor=color.white, size=size.small)
+    structDir      := 1
+    sameDirSwings  := 1
+    lastCHoCHBar   := bar_index
+    chochTriggered := true
+else if newCHoCHBear
+    label.new(bar_index, close, "CHoCH → Bear\nProtected low taken with displacement", style=label.style_label_down, color=color.new(colBear, 0), textcolor=color.white, size=size.small)
+    structDir      := -1
+    sameDirSwings  := 1
+    lastCHoCHBar   := bar_index
+    chochTriggered := true
+else
+    chochTriggered := false
+
+//==============================
+//====== MASTER BIAS ENGINE ====
+//==============================
+
+var string bias     = "RANGE"
+var string plotBias = "RANGE"
+
+if isRange
+    bias := "RANGE"
+else
+    if structDir == 1
+        bias := "BULLISH"
+    else if structDir == -1
+        bias := "BEARISH"
+
+prevBias = plotBias
+biasChangeAllowed = chochTriggered or (prevBias == "RANGE" and not isRange)
+
+if biasChangeAllowed and bias != prevBias
+    plotBias := bias
+else
+    plotBias := prevBias
+
+biasColor =
+     plotBias == "BULLISH" ? colBull :
+     plotBias == "BEARISH" ? colBear :
+     colRange
+
+var label biasLabel = na
+if barstate.islast
+    if na(biasLabel)
+        biasLabel := label.new(bar_index, high, "", xloc=xloc.bar_index, yloc=yloc.price, style=label.style_label_left, size=txtSizeBias)
+    label.set_x(biasLabel, bar_index)
+    label.set_y(biasLabel, high + atr * 1.5)
+    label.set_text(biasLabel, "Market Bias: " + plotBias + "\nContext > Entry > Execution")
+    label.set_color(biasLabel, color.new(biasColor, 0))
+    label.set_textcolor(biasLabel, color.white)
+
+//==============================
+//==== EXPIRY-AWARE CONTEXT ====
+//==============================
+
+dayOfWeek = dayofweek(time)
+
+isNiftyTicker      = str.contains(syminfo.ticker, "NIFTY")
+isBankNiftyTicker  = str.contains(syminfo.ticker, "BANKNIFTY")
+isFinNiftyTicker   = str.contains(syminfo.ticker, "FINNIFTY")
+
+isExpiryApprox =
+     (isNiftyTicker     and dayOfWeek == dayofweek.thursday) or
+     (isBankNiftyTicker and (dayOfWeek == dayofweek.wednesday or dayOfWeek == dayofweek.thursday)) or
+     (isFinNiftyTicker  and dayOfWeek == dayofweek.tuesday)
+
+bgcolor(isExpiryApprox ? color.new(color.purple, 93) : na)
+
+//==============================
+//===== SIMPLE PRACTICAL NOTES =
+//==============================
+//
+// HOW INDIAN INDEX MARKETS TEND TO MOVE (NIFTY / BANKNIFTY / SENSEX):
+// - The big players focus on weekly and monthly index options, not on every tick.
+// - Price often rotates slowly between obvious liquidity: prior day high/low, weekly levels, and round numbers like 100/250/500 points.
+// - Violent expiry days happen when option writers are trapped and forced to cover, not randomly.
+//
+// WHY PATIENCE IS CRITICAL:
+// - Clear trend changes (true CHoCH) are rare; when they happen with displacement from a liquidity area, they often lead to the main move of the day or week.
+// - Most of the time market is balancing, taking out both sides of short-term stops. Entries in the middle of noise lead to chop and overtrading.
+// - Waiting for structure + liquidity + displacement to align means fewer trades, but each idea has deeper conviction.
+//
+// EXPIRY DAYS BEHAVE DIFFERENTLY:
+// - On weekly/monthly expiry, option gamma and last‑minute hedging can force sharp moves, especially once a key round level or prior day / weekly level breaks.
+// - Premiums decay very fast; direction can look flat and then suddenly expand in the last 60–90 minutes.
+// - Expect more fake breaks around popular strikes (ATM, ±100/200 points). Let the trap form first, then look for structure confirmation.
+//
+// WHY "NO TRADE" IS OFTEN THE BEST TRADE:
+// - If bias is RANGE and there is no fresh trap or displacement, the market is simply rotating. Forcing trades here is how most intraday traders lose money.
+// - When chart looks noisy or bias keeps flipping, the information edge is low. In those periods, protecting mental capital is more important than forcing entries.
+// - One good trade aligned with bias, structure, liquidity and displacement is worth more than ten random scalps against option flows.
+//
+// INTENT OF THIS INDICATOR:
+// - Help the trader see where the market is actually re‑pricing risk, not every micro candle.
+// - Respect Indian expiry dynamics, option‑centric liquidity, and the fact that true structure shifts are rare but meaningful.
+// - Encourage: “I understand Indian market psychology. I wait for traps. I trade only when structure truly shifts.”
