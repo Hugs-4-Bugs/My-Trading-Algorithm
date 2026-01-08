@@ -1,0 +1,38 @@
+//@version=5
+indicator("Prabhat SMC — Liquidity Sweep (Institutional)", overlay=true, max_labels_count=200)
+
+// ================= INPUTS =================
+pivotLen   = input.int(5, "Swing Strength", minval=3)
+minWickATR = input.float(0.4, "Min Wick Size (ATR)", step=0.1)
+atrLen     = input.int(14, "ATR Length")
+
+// ================= CORE =================
+atr = ta.atr(atrLen)
+
+// Confirmed swing levels (NON-repainting)
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+// Store last swings
+var float lastHigh = na
+var float lastLow  = na
+
+if not na(ph)
+    lastHigh := ph
+
+if not na(pl)
+    lastLow := pl
+
+// ================= LIQUIDITY SWEEP =================
+buySideSweep  = not na(lastHigh) and high > lastHigh and close < lastHigh and (high - lastHigh) > atr * minWickATR
+sellSideSweep = not na(lastLow)  and low < lastLow  and close > lastLow  and (lastLow - low) > atr * minWickATR
+
+// ================= VISUALS =================
+plotshape(buySideSweep, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small, title="Buy-side Sweep")
+plotshape(sellSideSweep, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small, title="Sell-side Sweep")
+
+if buySideSweep
+    label.new(bar_index, high, "LIQUIDITY SWEEP\nBuy-side (Stops Taken)", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+if sellSideSweep
+    label.new(bar_index, low, "LIQUIDITY SWEEP\nSell-side (Stops Taken)", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
