@@ -1,0 +1,97 @@
+//@version=6
+indicator("ULTIMATE PRECISION SCALPER V4", overlay=true, max_labels_count=500)
+
+// ============================================
+// SETTINGS
+// ============================================
+atr_len      = input.int(14, "ATR Sensitivity")
+min_vol_mult = input.float(1.1, "Volume Confirmation", step=0.1)
+show_targets = input.bool(true, "Show SL/TP Lines")
+show_sessions = input.bool(true, "Show Market Sessions")
+
+// Colors
+color_bull = #26A69A
+color_bear = #EF5350
+
+// ============================================
+// 1. LIQUIDITY ENGINE (The Trap)
+// ============================================
+// Define internal liquidity based on last 20 bars
+pool_high = ta.highest(high[1], 20)
+pool_low  = ta.lowest(low[1], 20)
+
+// Detect a sweep (High/Low penetrated but price closes back inside)
+sweep_low  = low < pool_low and close > pool_low
+sweep_high = high > pool_high and close < pool_high
+
+// Store the "Sweep State"
+var bool is_bullish_primed = false
+var bool is_bearish_primed = false
+
+if sweep_low
+    is_bullish_primed := true
+    is_bearish_primed := false
+if sweep_high
+    is_bearish_primed := true
+    is_bullish_primed := false
+
+// ============================================
+// 2. STRUCTURE ENGINE (The Shift)
+// ============================================
+// Pivot detection for structure
+ph = ta.pivothigh(3, 3)
+pl = ta.pivotlow(3, 3)
+
+var float last_structure_high = na
+var float last_structure_low  = na
+
+if not na(ph)
+    last_structure_high := ph
+if not na(pl)
+    last_structure_low := pl
+
+// ============================================
+// 3. MOMENTUM & VOLUME
+// ============================================
+vol_ma = ta.sma(volume, 20)
+high_volume = volume > (vol_ma * min_vol_mult)
+atr = ta.atr(atr_len)
+displacement = math.abs(close - open) > (atr * 0.7)
+
+// ============================================
+// 4. FINAL SIGNAL LOGIC
+// ============================================
+// Bullish: Sweep Low + Break last High + Volume + Displacement
+buy_signal  = is_bullish_primed and ta.crossover(close, last_structure_high) and high_volume and displacement
+// Bearish: Sweep High + Break last Low + Volume + Displacement
+sell_signal = is_bearish_primed and ta.crossunder(close, last_structure_low) and high_volume and displacement
+
+// Reset primed state after 15 bars if no break occurs, or after a signal fires
+if buy_signal or sell_signal or ta.barssince(sweep_low or sweep_high) > 15
+    is_bullish_primed := false
+    is_bearish_primed := false
+
+// ============================================
+// 5. VISUALS, SESSIONS & PLOTTING
+// ============================================
+// Plot Liquidity Pools
+plot(pool_high, "Liquidity High", color.new(color.red, 75), style=plot.style_linebr)
+plot(pool_low, "Liquidity Low", color.new(color.green, 75), style=plot.style_linebr)
+
+// Session Logic (Fixed UTC Format)
+is_london = not na(time(timeframe.period, "0700-1500", "UTC"))
+is_ny     = not na(time(timeframe.period, "1200-2000", "UTC"))
+
+bgcolor(show_sessions and is_london ? color.new(color.orange, 90) : na, title="London Session")
+bgcolor(show_sessions and is_ny ? color.new(color.blue, 90) : na, title="NY Session")
+
+// Entry Labels
+if buy_signal
+    label.new(bar_index, low, "🚀 STRONG BUY\nSL: " + str.tostring(low - atr, "#.####") + "\nTP: " + str.tostring(high + (atr*2), "#.####"), color=color_bull, textcolor=color.white, style=label.style_label_up)
+
+if sell_signal
+    label.new(bar_index, high, "📉 STRONG SELL\nSL: " + str.tostring(high + atr, "#.####") + "\nTP: " + str.tostring(low - (atr*2), "#.####"), color=color_bear, textcolor=color.white, style=label.style_label_down)
+
+// Alerts
+alertcondition(buy_signal, "High Accuracy Buy", "Sweep + Shift detected! BUY")
+alertcondition(sell_signal, "High Accuracy Sell", "Sweep + Shift detected! SELL")
