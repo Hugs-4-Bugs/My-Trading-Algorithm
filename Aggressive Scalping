@@ -1,0 +1,73 @@
+//@version=5
+indicator("Prabhat Scalper (5m) — Aggressive", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ===== Inputs
+fastEmaLen  = input.int(9,  "Fast EMA", minval=1)
+slowEmaLen  = input.int(21, "Slow EMA", minval=2)
+rsiLen      = input.int(14, "RSI Length", minval=5)
+rsiLong     = input.int(52, "RSI Long Min", minval=45, maxval=70)
+rsiShort    = input.int(48, "RSI Short Max", minval=30, maxval=55)
+obvSlopeLen = input.int(20, "OBV Slope Lookback", minval=5)
+atrLen      = input.int(14, "ATR Length", minval=5)
+slATR       = input.float(1.0, "Stop ATR x", minval=0.3, maxval=5)
+tp1ATR      = input.float(1.5, "TP1 ATR x", minval=0.5, maxval=10)
+tp2ATR      = input.float(2.5, "TP2 ATR x", minval=1.0, maxval=20)
+minBarsGap  = input.int(5, "Min bars between signals", minval=0)
+useVWAP     = input.bool(true, "Require price above/below Session VWAP")
+
+// ===== Core
+emaFast = ta.ema(close, fastEmaLen)
+emaSlow = ta.ema(close, slowEmaLen)
+trendUp = emaFast > emaSlow
+trendDn = emaFast < emaSlow
+
+rsi = ta.rsi(close, rsiLen)
+obv = ta.cum(volume * math.sign(ta.change(close)))
+// simple slope proxy: current linreg - 1 bar ago
+obvSlope = ta.linreg(obv, obvSlopeLen, 0) - ta.linreg(obv, obvSlopeLen, 1)
+
+vwap = ta.vwap
+atr  = ta.atr(atrLen)
+
+// Signal logic (aggressive thresholds)
+longCond  = trendUp and rsi > rsiLong and obvSlope > 0 and (not useVWAP or close > vwap)
+shortCond = trendDn and rsi < rsiShort and obvSlope < 0 and (not useVWAP or close < vwap)
+
+// de-noise: spacing between entries
+canLong  = ta.barssince(longCond)  > minBarsGap
+canShort = ta.barssince(shortCond) > minBarsGap
+longSignal  = longCond  and canLong
+shortSignal = shortCond and canShort
+
+// Plots
+plot(emaFast, "EMA Fast", color=color.new(color.green, 0))
+plot(emaSlow, "EMA Slow", color=color.new(color.red,   0))
+plot(vwap, "VWAP", color=color.new(color.blue, 0), display=useVWAP ? display.all : display.none)
+
+// Markers
+plotshape(longSignal,  title="BUY",  style=shape.triangleup,   location=location.belowbar, color=color.new(color.green,0), text="BUY",  size=size.tiny)
+plotshape(shortSignal, title="SELL", style=shape.triangledown, location=location.abovebar, color=color.new(color.red,0),   text="SELL", size=size.tiny)
+
+// SL/TP guide anchored to signal bar
+longSL = longSignal ? close - slATR*atr : na
+longTP1 = longSignal ? close + tp1ATR*atr : na
+longTP2 = longSignal ? close + tp2ATR*atr : na
+
+shortSL = shortSignal ? close + slATR*atr : na
+shortTP1 = shortSignal ? close - tp1ATR*atr : na
+shortTP2 = shortSignal ? close - tp2ATR*atr : na
+
+plot(longSL,  "Long SL",  color=color.new(color.red, 0),  style=plot.style_circles)
+plot(longTP1, "Long TP1", color=color.new(color.green, 0),style=plot.style_circles)
+plot(longTP2, "Long TP2", color=color.new(color.green, 0),style=plot.style_circles)
+plot(shortSL,  "Short SL",  color=color.new(color.red, 0),  style=plot.style_circles)
+plot(shortTP1, "Short TP1", color=color.new(color.green, 0),style=plot.style_circles)
+plot(shortTP2, "Short TP2", color=color.new(color.green, 0),style=plot.style_circles)
+
+// Alerts
+alertcondition(longSignal,  title="Scalper BUY",  message="Scalper BUY on {{ticker}} @ {{close}}")
+alertcondition(shortSignal, title="Scalper SELL", message="Scalper SELL on {{ticker}} @ {{close}}")
+
+
+// if green red k uper cross karta hai to buy.
+// if green red k niche cross karta hai to sell.
