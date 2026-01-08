@@ -1,0 +1,95 @@
+//@version=5
+indicator("Institutional Indian Structure & Liquidity (IISL)", overlay=true, max_labels_count=500)
+
+// ==========================================
+// INPUTS & SETTINGS
+// ==========================================
+lookback = input.int(10, "Swing Lookback (Higher = Slower)", minval=5)
+strict_disp = input.float(0.5, "Displacement Multiplier", minval=0.1)
+show_pdhl = input.bool(true, "Show Prior Day H/L")
+
+// ==========================================
+// 1. STRUCTURE ENGINE
+// ==========================================
+var float top_y = na
+var float bot_y = na
+var int top_x = na
+var int bot_x = na
+
+high_point = ta.pivothigh(lookback, lookback)
+low_point = ta.pivotlow(lookback, lookback)
+
+if not na(high_point)
+    top_y := high_point
+    top_x := bar_index[lookback]
+
+if not na(low_point)
+    bot_y := low_point
+    bot_x := bar_index[lookback]
+
+// Displacement Logic (ATR based)
+atr = ta.atr(14)
+is_displaced = math.abs(close - open) > (atr * strict_disp)
+
+// ==========================================
+// 2. LIQUIDITY ENGINE (INDIAN STYLE)
+// ==========================================
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdl = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+
+// Strike Price Logic (Liquidity near round numbers)
+major_strike = math.round(close / 500) * 500
+
+// Trap Detection
+is_trap_high = high > top_y and close < top_y and bar_index > top_x
+is_trap_low = low < bot_y and close > bot_y and bar_index > bot_x
+
+// ==========================================
+// 3. CHoCH & BIAS (VERY RARE)
+// ==========================================
+var string market_bias = "NEUTRAL"
+var color bias_color = color.gray
+
+if close > top_y and is_displaced and market_bias != "BULLISH"
+    market_bias := "BULLISH"
+    bias_color := color.teal
+    label.new(bar_index, high, "CHoCH: BULLISH\n(Displacement Confirmed)", color=color.new(color.teal, 20), textcolor=color.white, style=label.style_label_down)
+
+if close < bot_y and is_displaced and market_bias != "BEARISH"
+    market_bias := "BEARISH"
+    bias_color := color.maroon
+    label.new(bar_index, low, "CHoCH: BEARISH\n(Displacement Confirmed)", color=color.new(color.maroon, 20), textcolor=color.white, style=label.style_label_up)
+
+// ==========================================
+// VISUALS
+// ==========================================
+// Trap Labels
+if is_trap_high
+    label.new(bar_index, high, "TRAP", style=label.style_label_down, color=color.orange, size=size.small)
+
+if is_trap_low
+    label.new(bar_index, low, "TRAP", style=label.style_label_up, color=color.orange, size=size.small)
+
+// Prior Day Levels
+plot(show_pdhl ? pdh : na, "PDH", color.new(color.blue, 50), 1, plot.style_linebr)
+plot(show_pdhl ? pdl : na, "PDL", color.new(color.blue, 50), 1, plot.style_linebr)
+
+// BIAS DASHBOARD
+var table board = table.new(position.top_right, 2, 2, bgcolor=color.new(color.black, 80), border_width=1)
+if barstate.islast
+    table.cell(board, 0, 0, "Market Bias", text_color=color.white)
+    table.cell(board, 1, 0, market_bias, bgcolor=bias_color, text_color=color.white)
+    table.cell(board, 0, 1, "Major Strike", text_color=color.white)
+    table.cell(board, 1, 1, str.tostring(major_strike), text_color=color.white)
+
+// ==========================================
+// DOCUMENTATION (WHY THIS MATTERS)
+// ==========================================
+
+/*
+INDIAN MARKET REALITY:
+- PATIENCE IS ALPHA: Nifty/BankNifty spend 70% of time in ranges to kill Option Premium (Theta).
+- THE TRAP: Institutions hunt liquidity at PDH/PDL before a real move. Only trade the reversal or the DISPLACED breakout.
+- EXPIRY DAYS: On Thursday, "Traps" are common. The CHoCH label only appears if the move is violent enough to trap sellers.
+- NO TRADE: If the dashboard shows NEUTRAL, go have coffee. The institutions are just collecting premium.
+*/
