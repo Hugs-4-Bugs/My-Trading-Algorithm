@@ -1,0 +1,53 @@
+//@version=5
+indicator("Prabhat SMC ATLAS — Conceptual Mapper (Stable)", overlay=true, max_labels_count=500)
+
+// ================= SETTINGS =================
+rangeLen = input.int(20, "Range Lookback")
+atrLen   = input.int(14, "ATR Length")
+
+// ================= CORE =====================
+atrVal   = ta.atr(atrLen)
+hiRange  = ta.highest(high, rangeLen)
+loRange  = ta.lowest(low, rangeLen)
+
+// ================= 1️⃣ COMPRESSION =================
+isCompression = (hiRange - loRange) < atrVal * 1.2
+
+plotshape(isCompression, style=shape.circle, location=location.top, color=color.orange, size=size.tiny)
+
+if isCompression
+    label.new(bar_index, high, "COMPRESSION\nMarket Trapped", style=label.style_label_down, color=color.orange, textcolor=color.white)
+
+// ================= 2️⃣ LIQUIDITY SWEEP =================
+sweepHigh = high > hiRange[1] and close < hiRange[1]
+sweepLow  = low  < loRange[1] and close > loRange[1]
+
+plotshape(sweepHigh, style=shape.triangledown, location=location.abovebar, color=color.red)
+plotshape(sweepLow,  style=shape.triangleup,   location=location.belowbar, color=color.green)
+
+if sweepHigh
+    label.new(bar_index, high, "LIQUIDITY SWEEP\nBuy Stops Taken", style=label.style_label_down, color=color.red, textcolor=color.white)
+
+if sweepLow
+    label.new(bar_index, low, "LIQUIDITY SWEEP\nSell Stops Taken", style=label.style_label_up, color=color.green, textcolor=color.white)
+
+// ================= 3️⃣ CHoCH =================
+chochUp   = sweepLow  and close > high[1]
+chochDown = sweepHigh and close < low[1]
+
+plotshape(chochUp,   style=shape.arrowup,   location=location.belowbar, color=color.lime)
+plotshape(chochDown, style=shape.arrowdown, location=location.abovebar, color=color.red)
+
+if chochUp
+    label.new(bar_index, low, "CHoCH\nBias Shift UP", style=label.style_label_up, color=color.lime, textcolor=color.black)
+
+if chochDown
+    label.new(bar_index, high, "CHoCH\nBias Shift DOWN", style=label.style_label_down, color=color.red, textcolor=color.white)
+
+// ================= 4️⃣ DISPLACEMENT =================
+displacement = math.abs(close - open) > atrVal
+
+plotshape(displacement, style=shape.square, location=location.top, color=color.blue, size=size.tiny)
+
+if displacement
+    label.new(bar_index, high, "DISPLACEMENT\nStrong Impulse", style=label.style_label_down, color=color.blue, textcolor=color.white)
