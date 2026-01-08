@@ -1,0 +1,108 @@
+//@version=6
+indicator("Master Institutional Confluence [Struct + FVG]", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// ==========================================
+// 1. GLOBAL CALCULATIONS (Must run every bar)
+// ==========================================
+// We calculate these HERE so the script never "loses count"
+atr_val = ta.atr(14)
+tr_val  = ta.tr
+lo_100  = ta.lowest(low, 50)
+hi_100  = ta.highest(high, 50)
+vol_avg = ta.sma(volume, 20)
+
+// ==========================================
+// 2. INPUTS
+// ==========================================
+grp_struc = "Structure Settings"
+lookback  = input.int(5, "Swing Sensitivity", minval=3, group=grp_struc)
+atr_mult  = input.float(1.0, "Displacement Strength", group=grp_struc)
+
+grp_fvg   = "Fair Value Gap (FVG)"
+show_fvg  = input.bool(true, "Show FVGs", group=grp_fvg)
+fvg_bull  = input.color(color.new(color.teal, 85), "Bullish Color", group=grp_fvg)
+fvg_bear  = input.color(color.new(color.maroon, 85), "Bearish Color", group=grp_fvg)
+
+// ==========================================
+// 3. STRUCTURE ENGINE
+// ==========================================
+var float swing_hi = na
+var float swing_lo = na
+
+// Pivot detection
+p_hi = ta.pivothigh(lookback, lookback)
+p_lo = ta.pivotlow(lookback, lookback)
+
+if not na(p_hi)
+    swing_hi := p_hi
+if not na(p_lo)
+    swing_lo := p_lo
+
+// Displacement (Momentum Check)
+body_size = math.abs(close - open)
+is_displaced = body_size > (atr_val * atr_mult)
+
+// ==========================================
+// 4. FAIR VALUE GAP (FVG) ENGINE
+// ==========================================
+// A "Gap" is when price moves too fast for orders to fill.
+// Bullish FVG: Low of candle 0 is HIGHER than High of candle 2
+is_bull_fvg = (low > high[2]) and (low - high[2]) > (atr_val * 0.2)
+is_bear_fvg = (high < low[2]) and (low[2] - high) > (atr_val * 0.2)
+
+// Draw Boxes
+if show_fvg and is_bull_fvg
+    box.new(bar_index[1], low, bar_index + 5, high[2], border_color=na, bgcolor=fvg_bull)
+
+if show_fvg and is_bear_fvg
+    box.new(bar_index[1], high, bar_index + 5, low[2], border_color=na, bgcolor=fvg_bear)
+
+// ==========================================
+// 5. LIQUIDITY SWEEP DETECTION
+// ==========================================
+// We look for wicks that poke a swing point but close back inside
+sweep_high = high > swing_hi and close < swing_hi
+sweep_low  = low < swing_lo and close > swing_lo
+
+plotshape(sweep_high, "Liquidity Grab (High)", shape.circle, location.abovebar, color.orange, size=size.tiny)
+plotshape(sweep_low, "Liquidity Grab (Low)", shape.circle, location.belowbar, color.orange, size=size.tiny)
+
+// ==========================================
+// 6. THE "SNIPER" ENTRY SIGNAL (CONFLUENCE)
+// ==========================================
+// Rule: We only want a signal if we have a SWEEP + DISPLACEMENT
+var bool setup_active = false
+var string bias = "NEUTRAL"
+
+if sweep_high
+    setup_active := true // Watch for short
+
+if sweep_low
+    setup_active := true // Watch for long
+
+// ENTRY LOGIC:
+// 1. A sweep happened recently
+// 2. We get a displacement candle (strong body)
+// 3. That candle creates an FVG (Speed)
+long_signal  = setup_active and close > swing_hi and is_displaced and is_bull_fvg
+short_signal = setup_active and close < swing_lo and is_displaced and is_bear_fvg
+
+if long_signal
+    label.new(bar_index, low, "SNIPER LONG", color=color.green, textcolor=color.white, style=label.style_label_up)
+    setup_active := false // Reset
+    bias := "BULLISH"
+
+if short_signal
+    label.new(bar_index, high, "SNIPER SHORT", color=color.red, textcolor=color.white, style=label.style_label_down)
+    setup_active := false // Reset
+    bias := "BEARISH"
+
+// ==========================================
+// 7. DASHBOARD
+// ==========================================
+var table dash = table.new(position.top_right, 2, 2, bgcolor=color.new(color.black, 80))
+if barstate.islast
+    table.cell(dash, 0, 0, "Market Bias", text_color=color.white)
+    table.cell(dash, 1, 0, bias, bgcolor=bias == "BULLISH" ? color.green : bias == "BEARISH" ? color.red : color.gray, text_color=color.white)
+    table.cell(dash, 0, 1, "Vol vs Avg", text_color=color.white)
+    table.cell(dash, 1, 1, str.tostring(math.round(volume/vol_avg, 1)) + "x", text_color=color.yellow)
