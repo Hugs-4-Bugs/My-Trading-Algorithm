@@ -1,0 +1,165 @@
+//@version=6
+indicator("Institutional Grade Liquidity Structure CHoCH", shorttitle="IG-LSC", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ============================================
+// CORE PHILOSOPHY
+// 1. Liquidity First (Sweeps)
+// 2. Structure Second (CHoCH)
+// 3. Displacement Third (Momentum)
+// ============================================
+
+// ========== INPUTS ==========
+group_struct = "🧠 Structure"
+swing_len = input.int(5, "Swing Length", minval=3, group=group_struct)
+atr_len = input.int(14, "ATR Length", group=group_struct)
+
+group_liq = "💧 Liquidity"
+liq_lookback = input.int(20, "Liquidity Lookback", group=group_liq)
+
+group_disp = "🚀 Displacement"
+displ_mult = input.float(1.5, "Displacement ATR Mult", group=group_disp)
+body_ratio = input.float(0.65, "Min Body Ratio", group=group_disp)
+
+group_sess = "⏰ Sessions"
+use_sessions = input.bool(true, "London/NY Sessions Only", group=group_sess)
+sess_london = input.session("0200-1100:1234567", "London", group=group_sess)
+sess_ny = input.session("0700-1600:1234567", "NY", group=group_sess)
+
+group_vis = "👁️ Visual"
+show_dots = input.bool(true, "Show Weak Sweeps (•)", group=group_vis)
+show_labels = input.bool(true, "Show Signals (LABELS)", group=group_vis)
+c_bull = input.color(color.green, "Bull Color", group=group_vis)
+c_bear = input.color(color.red, "Bear Color", group=group_vis)
+
+// ========== 1. FAST STRUCTURE ENGINE ==========
+// We calculate structure points first
+ph = ta.pivothigh(high, swing_len, swing_len)
+pl = ta.pivotlow(low, swing_len, swing_len)
+
+// ATR for displacement
+atr_val = ta.atr(atr_len)
+
+// Persistent Structure Variables
+var float struct_h = na
+var float struct_l = na
+var bool is_bullish_struct = false // Fixed: Initialized to false instead of na
+
+// Update Structure
+if not na(ph)
+    struct_h := ph
+    is_bullish_struct := false
+    
+if not na(pl)
+    struct_l := pl
+    is_bullish_struct := true
+
+// Plot Structure
+plotshape(ph, "Swing High", shape.triangledown, location.abovebar, color.new(color.red, 50), size=size.tiny)
+plotshape(pl, "Swing Low", shape.triangleup, location.belowbar, color.new(color.green, 50), size=size.tiny)
+
+// ========== 2. LIQUIDITY DETECTION ==========
+// Session Logic
+in_london = not na(time(timeframe.period, sess_london))
+in_ny = not na(time(timeframe.period, sess_ny))
+in_session = use_sessions ? (in_london or in_ny) : true
+
+// Session Highs/Lows
+var float s_high = na
+var float s_low = na
+
+if in_session
+    s_high := na(s_high) ? high : math.max(s_high, high)
+    s_low := na(s_low) ? low : math.min(s_low, low)
+else
+    s_high := na
+    s_low := na
+
+// Liquidity Levels
+liq_h = ta.highest(high, liq_lookback)
+liq_l = ta.lowest(low, liq_lookback)
+
+// ========== 3. SWEEP LOGIC ==========
+// Define Sweep Conditions safely
+sweep_low_cond = false
+if not na(struct_l)
+    sweep_low_cond := low < struct_l or (not na(s_low) and low < s_low) or low < liq_l
+
+sweep_high_cond = false
+if not na(struct_h)
+    sweep_high_cond := high > struct_h or (not na(s_high) and high > s_high) or high > liq_h
+
+// Classify Sweeps (Strong vs Weak)
+// Strong = Closed beyond level
+// Weak = Wicked beyond level only
+bull_sweep_str = sweep_low_cond and close < struct_l and in_session
+bull_sweep_wk = sweep_low_cond and not bull_sweep_str and low < struct_l and in_session
+
+bear_sweep_str = sweep_high_cond and close > struct_h and in_session
+bear_sweep_wk = sweep_high_cond and not bear_sweep_str and high > struct_h and in_session
+
+// Visuals for Sweeps
+plotshape(show_dots and bull_sweep_wk, "Bull Weak", shape.circle, location.belowbar, color.new(c_bull, 50), size=size.small)
+plotshape(show_dots and bear_sweep_wk, "Bear Weak", shape.circle, location.abovebar, color.new(c_bear, 50), size=size.small)
+
+if show_labels and bull_sweep_str
+    label.new(bar_index, low, "LIQ", xloc.bar_index, yloc.belowbar, color.new(c_bull, 20), label.style_label_up, color.white, size.small)
+
+if show_labels and bear_sweep_str
+    label.new(bar_index, high, "LIQ", xloc.bar_index, yloc.abovebar, color.new(c_bear, 20), label.style_label_down, color.white, size.small)
+
+// ========== 4. DISPLACEMENT ==========
+body = math.abs(close - open)
+rng = high - low
+is_big_body = rng > 0 ? (body / rng) > body_ratio : false
+is_momentum = rng > (atr_val * displ_mult)
+
+disp_up = is_momentum and is_big_body and close > open
+disp_down = is_momentum and is_big_body and close < open
+
+// ========== 5. CHoCH LOGIC ==========
+// We only allow CHoCH if we have seen a sweep recently
+var bool can_long = false
+var bool can_short = false
+
+// Enable permission on sweep
+if bear_sweep_str or bear_sweep_wk
+    can_long := true
+    
+if bull_sweep_str or bull_sweep_wk
+    can_short := true
+
+// Detect CHoCH (Break of Structure with Displacement)
+choch_up = false
+if can_long and not na(struct_h) and high > struct_h and disp_up
+    choch_up := true
+    can_long := false // Reset permission
+
+choch_down = false
+if can_short and not na(struct_l) and low < struct_l and disp_down
+    choch_down := true
+    can_short := false // Reset permission
+
+// Plot CHoCH
+plotshape(choch_up, "Bull CHoCH", shape.labelup, location.belowbar, c_bull, 0, "CHoCH", color.white, size=size.small)
+plotshape(choch_down, "Bear CHoCH", shape.labeldown, location.abovebar, c_bear, 0, "CHoCH", color.white, size=size.small)
+
+// ========== 6. EXECUTION SIGNALS ==========
+// The perfect setup: Strong Liquidity Sweep + CHoCH
+signal_long = bull_sweep_str and choch_up
+signal_short = bear_sweep_str and choch_down
+
+if show_labels and signal_long
+    label.new(bar_index, low, "EXECUTE", xloc.bar_index, yloc.belowbar, c_bull, label.style_label_up, color.white, size.normal)
+
+if show_labels and signal_short
+    label.new(bar_index, high, "EXECUTE", xloc.bar_index, yloc.abovebar, c_bear, label.style_label_down, color.white, size.normal)
+
+// Alerts
+alertcondition(signal_long, "Long Execute", "Long Entry: Liq Sweep + CHoCH")
+alertcondition(signal_short, "Short Execute", "Short Entry: Liq Sweep + CHoCH")
+
+// ========== VISUALS ==========
+plot(s_high, "Session High", color.new(color.red, 50))
+plot(s_low, "Session Low", color.new(color.green, 50))
+bgcolor(in_london ? color.new(color.blue, 95) : na, title="London BG")
+bgcolor(in_ny ? color.new(color.orange, 95) : na, title="NY BG")
