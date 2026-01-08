@@ -1,0 +1,282 @@
+//@version=6
+indicator("INDIAN MARKET STRUCTURE & LIQUIDITY", "IMS PRO", overlay=true, max_lines_count=500, max_labels_count=100)
+
+// ============================================
+// CONFIGURATION
+// ============================================
+// Colors
+color_bullish = color.new(#26A69A, 0)
+color_bearish = color.new(#EF5350, 0)
+color_neutral = color.new(#78909C, 0)
+color_liquidity = color.new(#FF9800, 70)
+color_trap = color.new(#EC407A, 85)
+
+// Settings
+lookback_swings = input.int(100, "Swing Lookback", minval=20)
+min_swing_size = input.float(0.5, "Min Swing %", minval=0.1) / 100
+expiry_awareness = input.bool(true, "Expiry Awareness")
+show_liquidity_zones = input.bool(true, "Liquidity Zones")
+
+// ============================================
+// 1. STRUCTURE ENGINE (SLOW & CLEAN)
+// ============================================
+// Find significant swings
+pivot_high = ta.pivothigh(2, 2)
+pivot_low = ta.pivotlow(2, 2)
+
+// Arrays for confirmed swings
+var float[] confirmed_highs = array.new<float>()
+var float[] confirmed_lows = array.new<float>()
+var int[] high_bars = array.new<int>()
+var int[] low_bars = array.new<int>()
+
+if not na(pivot_high) and pivot_high >= high * (1 + min_swing_size)
+    array.unshift(confirmed_highs, pivot_high)
+    array.unshift(high_bars, bar_index - 2)
+    if array.size(confirmed_highs) > lookback_swings
+        array.pop(confirmed_highs)
+        array.pop(high_bars)
+
+if not na(pivot_low) and pivot_low <= low * (1 - min_swing_size)
+    array.unshift(confirmed_lows, pivot_low)
+    array.unshift(low_bars, bar_index - 2)
+    if array.size(confirmed_lows) > lookback_swings
+        array.pop(confirmed_lows)
+        array.pop(low_bars)
+
+// ============================================
+// 2. LIQUIDITY ENGINE (INDIAN STYLE)
+// ============================================
+// Key liquidity levels
+prior_day_high = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+prior_day_low = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+weekly_high = request.security(syminfo.tickerid, "W", high[1], lookahead=barmerge.lookahead_on)
+weekly_low = request.security(syminfo.tickerid, "W", low[1], lookahead=barmerge.lookahead_on)
+
+// Round psychological levels
+current_price = close
+round_level = math.round(current_price / 100) * 100
+round_level_above = round_level + 100
+round_level_below = round_level - 100
+
+// Liquidity zone detection
+var bool in_liquidity_zone = false
+var float liquidity_zone_price = na
+
+// Check if near key liquidity
+near_prior_high = math.abs(high - prior_day_high) / prior_day_high <= 0.0015
+near_prior_low = math.abs(low - prior_day_low) / prior_day_low <= 0.0015
+near_weekly_high = math.abs(high - weekly_high) / weekly_high <= 0.002
+near_weekly_low = math.abs(low - weekly_low) / weekly_low <= 0.002
+near_round = math.abs(close - round_level) / round_level <= 0.002 or math.abs(close - round_level_above) / round_level_above <= 0.002 or math.abs(close - round_level_below) / round_level_below <= 0.002
+
+if near_prior_high or near_prior_low or near_weekly_high or near_weekly_low or near_round
+    in_liquidity_zone := true
+    if near_prior_high
+        liquidity_zone_price := prior_day_high
+    else if near_prior_low
+        liquidity_zone_price := prior_day_low
+    else if near_weekly_high
+        liquidity_zone_price := weekly_high
+    else if near_weekly_low
+        liquidity_zone_price := weekly_low
+    else if near_round
+        if math.abs(close - round_level) < math.abs(close - round_level_above)
+            liquidity_zone_price := round_level
+        else
+            liquidity_zone_price := round_level_above
+
+// Liquidity events
+var bool liquidity_probed = false
+var float last_liquidity_probe = na
+
+if in_liquidity_zone and not liquidity_probed
+    liquidity_probed := true
+    last_liquidity_probe := liquidity_zone_price
+    
+    if show_liquidity_zones
+        label.new(bar_index, liquidity_zone_price, "●", color=color_liquidity, textcolor=color.white, style=label.style_label_center, size=size.normal)
+                 
+        // Trap detection (failed breakout)
+        if bar_index > 1
+            // Check for immediate rejection
+            if high[1] >= liquidity_zone_price and close <= liquidity_zone_price * 0.998
+                label.new(bar_index, high, "TRAP\n", color=color_trap, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// Reset liquidity probe
+if not in_liquidity_zone
+    liquidity_probed := false
+
+// ============================================
+// 3. CHoCH ENGINE (VERY RARE)
+// ============================================
+var string market_structure = "NEUTRAL"
+var float last_choch_level = na
+var int last_choch_bar = na
+var bool structure_broken = false
+
+// Get latest confirmed highs and lows
+latest_high = array.size(confirmed_highs) > 0 ? array.get(confirmed_highs, 0) : na
+latest_low = array.size(confirmed_lows) > 0 ? array.get(confirmed_lows, 0) : na
+latest_high_bar = array.size(high_bars) > 0 ? array.get(high_bars, 0) : na
+latest_low_bar = array.size(low_bars) > 0 ? array.get(low_bars, 0) : na
+
+// CHoCH conditions (STRICT)
+bearish_choch = not na(latest_high) and low < latest_low and latest_low < latest_high
+bullish_choch = not na(latest_low) and high > latest_high and latest_high > latest_low
+
+// Only mark CHoCH if significant displacement follows
+displacement_bars = 3
+significant_displacement = math.abs(close - close[displacement_bars]) / close[displacement_bars] > 0.005
+
+if bearish_choch and significant_displacement and (na(last_choch_bar) or bar_index - last_choch_bar > 20)
+    market_structure := "BEARISH"
+    last_choch_level := latest_low
+    last_choch_bar := bar_index
+    structure_broken := true
+    
+    // Visual
+    line.new(bar_index - displacement_bars, latest_low, bar_index, latest_low, color=color_bearish, width=2, style=line.style_dashed)
+    label.new(bar_index, latest_low, "CHoCH\n↓", color=color_bearish, textcolor=color.white, style=label.style_label_down, size=size.normal)
+
+if bullish_choch and significant_displacement and (na(last_choch_bar) or bar_index - last_choch_bar > 20)
+    market_structure := "BULLISH"
+    last_choch_level := latest_high
+    last_choch_bar := bar_index
+    structure_broken := true
+    
+    line.new(bar_index - displacement_bars, latest_high, bar_index, latest_high, color=color_bullish, width=2, style=line.style_dashed)
+    label.new(bar_index, latest_high, "CHoCH\n↑", color=color_bullish, textcolor=color.white, style=label.style_label_up, size=size.normal)
+
+// ============================================
+// 4. DISPLACEMENT ENGINE (EXPIRY-AWARE)
+// ============================================
+// Check for range expansion
+var float range_high = high
+var float range_low = low
+var int range_start = bar_index
+
+// Update range
+if high > range_high
+    range_high := high
+if low < range_low
+    range_low := low
+
+// Displacement detection (outside recent range)
+range_period = 20
+recent_range_high = ta.highest(high, range_period)
+recent_range_low = ta.lowest(low, range_period)
+
+displacement_up = close > recent_range_high and high - recent_range_high > recent_range_high * 0.003
+displacement_down = close < recent_range_low and recent_range_low - low > recent_range_low * 0.003
+
+// Expiry day adjustment (Thursdays for weekly expiry)
+is_expiry_day = dayofweek == dayofweek.thursday and expiry_awareness
+expiry_multiplier = is_expiry_day ? 1.5 : 1.0
+
+if displacement_up
+    displacement_size = (high - recent_range_high) / recent_range_high
+    if displacement_size > 0.003 * expiry_multiplier
+        label.new(bar_index, high, "DISPLACE\n+" + str.tostring(displacement_size * 100, "#.##") + "%", color=color_bullish, textcolor=color.white, style=label.style_label_up, size=size.small)
+
+if displacement_down
+    displacement_size = (recent_range_low - low) / recent_range_low
+    if displacement_size > 0.003 * expiry_multiplier
+        label.new(bar_index, low, "DISPLACE\n-" + str.tostring(displacement_size * 100, "#.##") + "%", color=color_bearish, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// ============================================
+// 5. MASTER BIAS ENGINE
+// ============================================
+// Determine market bias based on multiple factors
+var string market_bias = "RANGE"
+
+// Factor 1: Structure
+structure_bias = market_structure == "BULLISH" ? 1 : market_structure == "BEARISH" ? -1 : 0
+
+// Factor 2: Price relative to key levels
+price_vs_prior = close > prior_day_high ? 1 : close < prior_day_low ? -1 : 0
+price_vs_weekly = close > weekly_high ? 1 : close < weekly_low ? -1 : 0
+
+// Factor 3: Recent displacement bias
+displacement_bias = 0
+if displacement_up
+    displacement_bias := 1
+else if displacement_down
+    displacement_bias := -1
+
+// Factor 4: Higher timeframe trend (simplified)
+htf_trend = close > ta.sma(close, 50) ? 1 : -1
+
+// Calculate composite bias
+composite_score = structure_bias * 3 + price_vs_prior * 1 + price_vs_weekly * 2 + displacement_bias * 2 + htf_trend * 1
+
+// Set bias (with hysteresis to prevent whipsaws)
+var float bias_score = 0.0
+bias_score := 0.7 * bias_score + 0.3 * composite_score  // Smoothing
+
+if bias_score >= 2
+    market_bias := "BULLISH"
+else if bias_score <= -2
+    market_bias := "BEARISH"
+else
+    market_bias := "RANGE"
+
+// ============================================
+// VISUAL OUTPUT
+// ============================================
+// Background color based on bias
+bgcolor(market_bias == "BULLISH" ? color.new(color_bullish, 90) : market_bias == "BEARISH" ? color.new(color_bearish, 90) : color.new(color_neutral, 90))
+
+// Market bias label
+var label bias_label = na
+if barstate.islast
+    bias_label := label.new(bar_index, high, "MARKET BIAS: " + market_bias + "\nStructure: " + market_structure + "\nExpiry: " + (is_expiry_day ? "YES" : "NO"), color=market_bias == "BULLISH" ? color_bullish : market_bias == "BEARISH" ? color_bearish : color_neutral, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
+
+// Key level plots (subtle)
+p1 = plot(show_liquidity_zones ? prior_day_high : na, "PD High", color_liquidity, 1, plot.style_circles)
+p2 = plot(show_liquidity_zones ? prior_day_low : na, "PD Low", color_liquidity, 1, plot.style_circles)
+p3 = plot(show_liquidity_zones ? weekly_high : na, "W High", color_liquidity, 2, plot.style_circles)
+p4 = plot(show_liquidity_zones ? weekly_low : na, "W Low", color_liquidity, 2, plot.style_circles)
+
+// Round levels
+p5 = plot(show_liquidity_zones ? round_level : na, "Round", color.new(#78909C, 50), 1, plot.style_circles)
+
+// ============================================
+// ALERTS
+// ============================================
+alertcondition(structure_broken, "Structure Change", "Market structure shift detected")
+alertcondition(in_liquidity_zone and (near_weekly_high or near_weekly_low), "Weekly Liquidity", "Approaching weekly key level")
+
+// ============================================
+// END-OF-CODE: INDIAN MARKET PHILOSOPHY
+// ============================================
+// Indian markets move with PURPOSE, not noise.
+// NIFTY/BANKNIFTY respect OPTION STRIKES more than indicators.
+// 
+// WHY PATIENCE IS CRITICAL:
+// 1. Real trends develop over days/weeks
+// 2. 80% of moves happen around expiry
+// 3. Liquidity traps are set intentionally
+// 
+// EXPIRY DAY BEHAVIOR:
+// - Moves accelerate toward strikes
+// - Fake breakouts are COMMON
+// - Closing hour determines next week's bias
+// 
+// NO TRADE IS OFTEN THE BEST TRADE BECAUSE:
+// 1. Indian markets have clear institutional footprints
+// 2. Wait for them to SHOW THEIR HAND at key levels
+// 3. Trading less = catching bigger moves
+// 4. Your edge is PATIENCE, not prediction
+// 
+// REMEMBER:
+// "Structure shifts are RARE. 
+//  When they happen, they're POWERFUL.
+//  Your job is to WAIT, WATCH, then ACT."
+// 
+// This indicator helps you SEE what matters:
+// 1. WHERE liquidity sits
+// 2. WHEN structure truly changes
+// 3. WHY price is moving
+// 
+// Trade the MARKET'S REALITY, not your HOPE.
