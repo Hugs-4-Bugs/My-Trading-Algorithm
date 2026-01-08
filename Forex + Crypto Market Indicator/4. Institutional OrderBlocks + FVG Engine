@@ -1,0 +1,131 @@
+//@version=6
+indicator("Institutional OrderBlocks + FVG Engine", shorttitle="IG-OB-FVG", overlay=true, max_boxes_count=500)
+
+// ============================================
+// PHILOSOPHY: THE INSTITUTIONAL FOOTPRINT
+// 1. Big moves leave "Fair Value Gaps" (FVG)
+// 2. The origin of the move is the "Order Block" (OB)
+// 3. Price magnetically returns to these zones to rebalance
+// ============================================
+
+// ========== INPUTS ==========
+grp_ob = "🧱 Order Blocks"
+ob_len = input.int(5, "Swing Detection Length", group=grp_ob)
+mitigation_filter = input.bool(true, "Hide Mitigated Zones?", group=grp_ob)
+
+grp_fvg = "🧲 Fair Value Gaps"
+fvg_threshold = input.float(0.5, "Min Imbalance Size (ATR)", group=grp_fvg)
+show_fvg = input.bool(true, "Show FVGs", group=grp_fvg)
+
+grp_color = "🎨 Colors"
+c_bull_ob = input.color(color.new(color.green, 80), "Bullish OB", group=grp_color)
+c_bear_ob = input.color(color.new(color.red, 80), "Bearish OB", group=grp_color)
+c_fvg = input.color(color.new(color.yellow, 85), "FVG Color", group=grp_color)
+
+// ========== 1. DETECT ORDER BLOCKS ==========
+// An Order Block is valid if it caused a Structure Break (BOS)
+ph = ta.pivothigh(high, ob_len, ob_len)
+pl = ta.pivotlow(low, ob_len, ob_len)
+
+// Track Structure
+var float last_structure_h = na
+var float last_structure_l = na
+
+if not na(ph)
+    last_structure_h := ph
+if not na(pl)
+    last_structure_l := pl
+
+// Detect Break of Structure (BOS)
+bull_bos = close > last_structure_h and not na(last_structure_h)
+bear_bos = close < last_structure_l and not na(last_structure_l)
+
+// Box Management
+var box[] bull_obs = array.new_box()
+var box[] bear_obs = array.new_box()
+
+// Create Bullish OB (Last red candle before the up move that broke structure)
+// We look back to find the pivot low candle
+if bull_bos and not bull_bos[1] // Trigger on fresh break
+    // Find the candle corresponding to the last pivot low
+    // Simplified: We mark the lowest down-candle in the recent swing
+    int lookback = 20
+    int lowest_idx = 0
+    float lowest_val = high + 100000
+    
+    for i = 1 to lookback
+        if low[i] < lowest_val
+            lowest_val := low[i]
+            lowest_idx := i
+            
+    // Draw Box
+    b = box.new(bar_index[lowest_idx], high[lowest_idx], bar_index + 10, low[lowest_idx], border_color=na, bgcolor=c_bull_ob)
+    array.push(bull_obs, b)
+    last_structure_h := na // Reset to avoid duplicate blocks
+
+// Create Bearish OB (Last green candle before down move)
+if bear_bos and not bear_bos[1]
+    int lookback = 20
+    int highest_idx = 0
+    float highest_val = 0.0
+    
+    for i = 1 to lookback
+        if high[i] > highest_val
+            highest_val := high[i]
+            highest_idx := i
+            
+    b = box.new(bar_index[highest_idx], high[highest_idx], bar_index + 10, low[highest_idx], border_color=na, bgcolor=c_bear_ob)
+    array.push(bear_obs, b)
+    last_structure_l := na 
+
+// ========== 2. FAIR VALUE GAPS (FVG) ==========
+// FVG = Gap between Candle[0] Low and Candle[2] High (Bullish)
+// Logic: If (Low[0] > High[2]), there is a gap.
+atr = ta.atr(14)
+is_imbalance = math.abs(close - open) > atr * 0.5
+
+bull_fvg = low > high[2] and close[1] > open[1] // Gap Up
+bear_fvg = high < low[2] and close[1] < open[1] // Gap Down
+
+if show_fvg and bull_fvg
+    box.new(bar_index[2], low, bar_index, high[2], border_color=na, bgcolor=c_fvg)
+
+if show_fvg and bear_fvg
+    box.new(bar_index[2], low[2], bar_index, high, border_color=na, bgcolor=c_fvg)
+
+// ========== 3. CLEANUP (MITIGATION) ==========
+// Remove boxes when price touches them to keep chart clean
+if mitigation_filter
+    // Clean Bull OBs
+    if array.size(bull_obs) > 0
+        for i = array.size(bull_obs) - 1 to 0
+            b = array.get(bull_obs, i)
+            bottom = box.get_bottom(b)
+            top = box.get_top(b)
+            // If price touches or breaks the box
+            if low < top
+                box.delete(b)
+                array.remove(bull_obs, i)
+    
+    // Clean Bear OBs
+    if array.size(bear_obs) > 0
+        for i = array.size(bear_obs) - 1 to 0
+            b = array.get(bear_obs, i)
+            bottom = box.get_bottom(b)
+            top = box.get_top(b)
+            if high > bottom
+                box.delete(b)
+                array.remove(bear_obs, i)
+
+// ========== 4. EXTEND BOXES ==========
+// Extend active boxes to the right
+if barstate.islast
+    if array.size(bull_obs) > 0
+        for i = 0 to array.size(bull_obs) - 1
+            b = array.get(bull_obs, i)
+            box.set_right(b, bar_index + 50)
+            
+    if array.size(bear_obs) > 0
+        for i = 0 to array.size(bear_obs) - 1
+            b = array.get(bear_obs, i)
+            box.set_right(b, bar_index + 50)
