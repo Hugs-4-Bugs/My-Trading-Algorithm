@@ -1,0 +1,56 @@
+//@version=5
+indicator("Prabhat GREEKFORCE — Greeks Behavior", overlay=true)
+
+// ================= INPUTS =================
+atrLen = input.int(14, "ATR Length")
+expansionFactor = input.float(1.3, "Expansion Factor")
+compressionFactor = input.float(0.7, "Compression Factor")
+roundGap = input.int(50, "ATM / Round Proximity")
+
+// ================= CORE =================
+atrVal = ta.atr(atrLen)
+avgATR = ta.sma(atrVal, 20)
+
+// Round number proximity (ATM proxy)
+nearestRound = math.round(close / roundGap) * roundGap
+nearATM = math.abs(close - nearestRound) <= roundGap / 2
+
+// Volatility state
+isExpansion = atrVal > avgATR * expansionFactor
+isCompression = atrVal < avgATR * compressionFactor
+
+// Displacement candle
+displacement = math.abs(close - open) > atrVal * 1.2
+
+// ================= GREEKS BEHAVIOR =================
+
+// Gamma pressure = near ATM + expansion + displacement
+gammaON = nearATM and isExpansion and displacement
+
+// Vega pressure = expansion regardless of location
+vegaON = isExpansion and not isCompression
+
+// Theta dominance = compression + no displacement
+thetaON = isCompression and not displacement
+
+// ================= VISUAL SIGNALS =================
+
+// Gamma
+plotshape(gammaON, title="Gamma ON", style=shape.circle, location=location.abovebar, color=color.red, size=size.tiny)
+
+// Vega
+plotshape(vegaON and not gammaON, title="Vega Expansion", style=shape.square, location=location.abovebar, color=color.blue, size=size.tiny)
+
+// Theta
+plotshape(thetaON, title="Theta Zone", style=shape.xcross, location=location.belowbar, color=color.gray, size=size.tiny)
+
+// ================= LABELS =================
+if gammaON
+    label.new(bar_index, high, "GAMMA ON\nExplosive Zone", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
+
+if thetaON
+    label.new(bar_index, low, "THETA ZONE\nAvoid Buying", style=label.style_label_up, color=color.gray, textcolor=color.white, size=size.small)
+
+// ================= INFO =================
+bgcolor(thetaON ? color.new(color.gray, 85) : na)
+bgcolor(gammaON ? color.new(color.red, 85) : na)
