@@ -1,0 +1,85 @@
+//@version=5
+indicator("Prabhat SMC ATLAS — Market Structure Mapper", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ================= TOGGLES =================
+showCompression = input.bool(true, "Show Compression")
+showSweep = input.bool(true, "Show Liquidity Sweep")
+showCHoCH = input.bool(true, "Show CHoCH")
+showBOS = input.bool(true, "Show BOS")
+showOB = input.bool(true, "Show Order Block")
+showFVG = input.bool(true, "Show FVG")
+showSupplyDemand = input.bool(true, "Show Supply / Demand")
+
+// ================= CORE =================
+atrLen = input.int(14)
+atrVal = ta.atr(atrLen)
+avgATR = ta.sma(atrVal, 20)
+
+// ================= 1. COMPRESSION =================
+rangeHigh = ta.highest(high, 20)
+rangeLow = ta.lowest(low, 20)
+rangeSize = rangeHigh - rangeLow
+isCompression = atrVal < avgATR * 0.6 and rangeSize < avgATR * 1.2
+
+if showCompression and isCompression
+    label.new(bar_index, high, "COMPRESSION\nMarket Trapped", style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.tiny)
+
+// ================= 2. LIQUIDITY SWEEP =================
+sweepHigh = high > rangeHigh and close < rangeHigh
+sweepLow = low < rangeLow and close > rangeLow
+
+if showSweep and sweepHigh
+    label.new(bar_index, high, "LIQUIDITY SWEEP\nBuy-side stops", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.tiny)
+
+if showSweep and sweepLow
+    label.new(bar_index, low, "LIQUIDITY SWEEP\nSell-side stops", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.tiny)
+
+// ================= 3. CHoCH =================
+chochUp = sweepLow and close > high[1]
+chochDn = sweepHigh and close < low[1]
+
+if showCHoCH and chochUp
+    label.new(bar_index, low, "CHoCH\nBias Shift Up", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.tiny)
+
+if showCHoCH and chochDn
+    label.new(bar_index, high, "CHoCH\nBias Shift Down", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.tiny)
+
+// ================= 4. BOS =================
+bosUp = close > ta.highest(high, 5)[1]
+bosDn = close < ta.lowest(low, 5)[1]
+
+if showBOS and bosUp
+    label.new(bar_index, high, "BOS\nTrend Continues Up", style=label.style_label_down, color=color.blue, textcolor=color.white, size=size.tiny)
+
+if showBOS and bosDn
+    label.new(bar_index, low, "BOS\nTrend Continues Down", style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.tiny)
+
+// ================= 5. ORDER BLOCK =================
+bullOB = close > open and close[1] < open[1]
+bearOB = close < open and close[1] > open[1]
+
+if showOB and bullOB
+    label.new(bar_index, low, "ORDER BLOCK\nBullish", style=label.style_label_up, color=color.teal, textcolor=color.white, size=size.tiny)
+
+if showOB and bearOB
+    label.new(bar_index, high, "ORDER BLOCK\nBearish", style=label.style_label_down, color=color.teal, textcolor=color.white, size=size.tiny)
+
+// ================= 6. FVG =================
+bullFVG = low > high[2]
+bearFVG = high < low[2]
+
+if showFVG and bullFVG
+    label.new(bar_index, low, "FVG\nBullish Imbalance", style=label.style_label_up, color=color.purple, textcolor=color.white, size=size.tiny)
+
+if showFVG and bearFVG
+    label.new(bar_index, high, "FVG\nBearish Imbalance", style=label.style_label_down, color=color.purple, textcolor=color.white, size=size.tiny)
+
+// ================= 7. SUPPLY / DEMAND =================
+supply = high == ta.highest(high, 30)
+demand = low == ta.lowest(low, 30)
+
+if showSupplyDemand and supply
+    label.new(bar_index, high, "SUPPLY ZONE\nSelling Area", style=label.style_label_down, color=color.maroon, textcolor=color.white, size=size.tiny)
+
+if showSupplyDemand and demand
+    label.new(bar_index, low, "DEMAND ZONE\nBuying Area", style=label.style_label_up, color=color.navy, textcolor=color.white, size=size.tiny)
