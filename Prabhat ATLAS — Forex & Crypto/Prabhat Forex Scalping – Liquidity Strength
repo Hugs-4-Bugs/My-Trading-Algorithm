@@ -1,0 +1,245 @@
+//@version=6
+indicator("Prabhat Forex Scalping – Liquidity Strength (Beginner Friendly)", overlay=true)
+
+////////////////////////////////////////////////////////////////////////////////
+// ============================== INTRO =======================================
+//
+// This indicator is built ONLY for:
+// - Forex scalping
+// - Indices scalping
+// - Crypto lower timeframes
+//
+// CORE IDEA:
+// Institutions first TAKE LIQUIDITY (stops),
+// then they MOVE price in the opposite direction.
+//
+// This indicator DOES NOT give buy/sell entries directly.
+// It tells you:
+// 👉 WHERE smart money has taken liquidity
+// 👉 HOW STRONG that liquidity grab was
+//
+////////////////////////////////////////////////////////////////////////////////
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ============================== INPUTS =======================================
+//
+// Swing Lookback:
+// How many candles back we check for previous high/low
+// Smaller = more signals (noisy)
+// Bigger  = cleaner signals
+//
+////////////////////////////////////////////////////////////////////////////////
+swingLen = input.int(5, "Swing Lookback (Structure)", minval=3)
+
+// ATR Length:
+// Used to measure strength of the wick
+// ATR makes the indicator adaptive to volatility
+atrLen = input.int(14, "ATR Length (Strength Filter)")
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ============================== CORE DATA ====================================
+//
+// ATR = average candle movement
+// We use this to judge if a wick is weak or strong
+//
+////////////////////////////////////////////////////////////////////////////////
+atr = ta.atr(atrLen)
+
+
+// Previous swing high & low (liquidity pools)
+prevHigh = ta.highest(high, swingLen)[1]
+prevLow  = ta.lowest(low, swingLen)[1]
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ========================== LIQUIDITY CONDITIONS =============================
+//
+// Buy-side liquidity sweep:
+// Price goes ABOVE previous high
+// But CLOSES back below it
+// -> Buyers trapped
+//
+////////////////////////////////////////////////////////////////////////////////
+buySideSweep = high > prevHigh and close < prevHigh
+
+
+////////////////////////////////////////////////////////////////////////////////
+// Sell-side liquidity sweep:
+// Price goes BELOW previous low
+// But CLOSES back above it
+// -> Sellers trapped
+//
+////////////////////////////////////////////////////////////////////////////////
+sellSideSweep = low < prevLow and close > prevLow
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ============================== STRENGTH LOGIC ===============================
+//
+// Wick size tells us aggression
+// Bigger wick = stronger stop-hunt
+//
+////////////////////////////////////////////////////////////////////////////////
+buyWick  = high - close        // upper wick
+sellWick = close - low         // lower wick
+
+// Normalize using ATR
+buyStrength  = buyWick / atr
+sellStrength = sellWick / atr
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ============================== WEAK SIGNALS =================================
+//
+// These are informational only.
+// They show liquidity taken but NOT aggressive enough.
+//
+// DOTS = observe only
+//
+////////////////////////////////////////////////////////////////////////////////
+plotshape(
+    buySideSweep and buyStrength >= 0.5 and buyStrength < 1.0,
+    title="Weak Buy-side Liquidity",
+    style=shape.circle,
+    location=location.abovebar,
+    size=size.tiny,
+    color=color.red
+)
+
+plotshape(
+    sellSideSweep and sellStrength >= 0.5 and sellStrength < 1.0,
+    title="Weak Sell-side Liquidity",
+    style=shape.circle,
+    location=location.belowbar,
+    size=size.tiny,
+    color=color.green
+)
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ============================ STRONG SIGNALS =================================
+//
+// THESE ARE IMPORTANT
+// Only these are used for trading decisions
+//
+// Strong = wick >= 1 ATR
+//
+////////////////////////////////////////////////////////////////////////////////
+
+// STRONG BUY-SIDE LIQUIDITY TAKEN
+if buySideSweep and buyStrength >= 1.0
+    label.new(
+        bar_index,
+        high,
+        "STRONG BUY-SIDE LIQUIDITY TAKEN\n(Buyers Trapped)",
+        style=label.style_label_down,
+        color=color.red,
+        textcolor=color.white,
+        size=size.small
+    )
+
+
+// STRONG SELL-SIDE LIQUIDITY TAKEN
+if sellSideSweep and sellStrength >= 1.0
+    label.new(
+        bar_index,
+        low,
+        "STRONG SELL-SIDE LIQUIDITY TAKEN\n(Sellers Trapped)",
+        style=label.style_label_up,
+        color=color.green,
+        textcolor=color.white,
+        size=size.small
+    )
+
+
+////////////////////////////////////////////////////////////////////////////////
+// =========================== HOW TO TRADE ====================================
+//
+// STEP 1️⃣ : IGNORE DOTS
+// - Dots are weak liquidity
+// - They are NOT trade signals
+//
+// STEP 2️⃣ : WAIT FOR TEXT LABEL
+// - Only trade after:
+//   "STRONG BUY-SIDE LIQUIDITY TAKEN"
+//   OR
+//   "STRONG SELL-SIDE LIQUIDITY TAKEN"
+//
+// STEP 3️⃣ : AFTER STRONG LIQUIDITY
+// - Do NOT enter immediately
+// - Wait for confirmation like:
+//   • CHoCH
+//   • Structure break
+//   • Strong displacement candle
+//
+// STEP 4️⃣ : ENTRY
+// - Sell after strong BUY-side liquidity + bearish shift
+// - Buy after strong SELL-side liquidity + bullish shift
+//
+// STEP 5️⃣ : STOP LOSS
+// - Sell SL = above sweep high
+// - Buy SL  = below sweep low
+//
+// STEP 6️⃣ : TARGET
+// - Nearest liquidity
+// - Previous high / low
+// - Or fixed RR (1:2 for scalping)
+//
+// IMPORTANT RULE:
+// ❌ No liquidity = No trade
+// ❌ No confirmation = No trade
+//
+////////////////////////////////////////////////////////////////////////////////
+
+
+// ============================== END ===========================================
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+// ===================== DOT COLOR MEANING (IMPORTANT) =========================
+//
+// You will see TWO TYPES OF DOTS on the chart.
+// These dots are NOT entry signals.
+//
+// 🔴 RED DOT (Above Candle)
+// --------------------------------
+// Meaning:
+// - Weak BUY-side liquidity taken
+// - Price took highs (buyers’ stops)
+// - BUT the move was NOT strong enough
+//
+// Interpretation:
+// - Institutions may be testing liquidity
+// - Or partial stop-hunt
+// - Direction is NOT confirmed
+//
+// Trading Rule:
+// ❌ Do NOT sell just because of red dot
+// ❌ Wait for STRONG liquidity label + confirmation
+//
+//
+// 🟢 GREEN DOT (Below Candle)
+// --------------------------------
+// Meaning:
+// - Weak SELL-side liquidity taken
+// - Price took lows (sellers’ stops)
+// - BUT the move was NOT strong enough
+//
+// Interpretation:
+// - Early accumulation possible
+// - Or minor stop sweep
+// - Direction is NOT confirmed
+//
+// Trading Rule:
+// ❌ Do NOT buy just because of green dot
+// ❌ Wait for STRONG liquidity label + confirmation
+//
+//
+// 🧠 SUMMARY:
+// Dots = Information only
+// Labels = Actionable context
+//
+////////////////////////////////////////////////////////////////////////////////
