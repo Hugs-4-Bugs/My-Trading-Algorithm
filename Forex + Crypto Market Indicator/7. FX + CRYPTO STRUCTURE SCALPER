@@ -1,0 +1,172 @@
+//@version=6
+indicator("FX/CRYPTO STRUCTURE SCALPER", overlay=true)
+
+// Colors
+color_bullish = color.new(#26A69A, 0)
+color_bearish = color.new(#EF5350, 0)
+color_liquidity = color.new(#FF9800, 80)
+color_execution = color.new(#2196F3, 90)
+
+// Settings
+atr_period = input.int(14, "ATR Period", minval=5, maxval=50)
+min_displacement = input.float(1.0, "Min Displacement (ATR%)", minval=0.5, maxval=3.0) / 100
+show_liquidity = input.bool(true, "Show Liquidity Levels")
+show_execution = input.bool(true, "Show Execution Zones")
+show_sessions = input.bool(true, "Show Session Colors")
+
+// Get current hour (use exchange time, we'll calculate UTC manually)
+// Most exchanges use UTC anyway, but let's make it safe
+current_hour = hour
+current_minute = minute
+
+// Simple UTC approximation (assuming exchange is UTC)
+hour_utc = current_hour
+// If your broker is not UTC, adjust here. For example, if broker is EST (-5), add 5
+
+// Session definitions (in UTC)
+london_session = hour_utc >= 7 and hour_utc < 16
+ny_session = hour_utc >= 13 and hour_utc < 22
+asian_session = hour_utc >= 22 or hour_utc < 7
+
+// Simple swing detection
+pivot_high = ta.pivothigh(3, 3)
+pivot_low = ta.pivotlow(3, 3)
+
+// Store latest swings
+var float latest_high = na
+var float latest_low = na
+var int high_bar = 0
+var int low_bar = 0
+
+if not na(pivot_high)
+    latest_high := pivot_high
+    high_bar := bar_index - 3
+
+if not na(pivot_low)
+    latest_low := pivot_low
+    low_bar := bar_index - 3
+
+// Key levels
+prior_day_high = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+prior_day_low = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+session_high = ta.highest(high, 24)
+session_low = ta.lowest(low, 24)
+
+// Liquidity sweep detection
+var bool liquidity_swept = false
+var float swept_level = na
+var int swept_bar = 0
+
+// Threshold for sweep detection (0.03% for Forex)
+threshold = 0.0003
+
+near_prior_high = math.abs(high - prior_day_high) / prior_day_high <= threshold
+near_prior_low = math.abs(low - prior_day_low) / prior_day_low <= threshold
+near_session_high = math.abs(high - session_high) / session_high <= threshold
+near_session_low = math.abs(low - session_low) / session_low <= threshold
+
+is_sweep = near_prior_high or near_prior_low or near_session_high or near_session_low
+
+if is_sweep and not liquidity_swept
+    liquidity_swept := true
+    if near_prior_high
+        swept_level := prior_day_high
+    else if near_prior_low
+        swept_level := prior_day_low
+    else if near_session_high
+        swept_level := session_high
+    else
+        swept_level := session_low
+    
+    swept_bar := bar_index
+    
+    label.new(bar_index, swept_level, "•", color=color_liquidity, textcolor=color.white, style=label.style_label_center, size=size.normal)
+
+// Reset sweep after 10 bars
+if bar_index - swept_bar > 10
+    liquidity_swept := false
+
+// CHoCH detection
+bearish_choch = not na(latest_high) and not na(latest_low) and low < latest_low
+bullish_choch = not na(latest_high) and not na(latest_low) and high > latest_high
+
+// Mark CHoCH
+if bearish_choch and liquidity_swept
+    label.new(bar_index, latest_low, "CH↓", color=color_bearish, textcolor=color.white, style=label.style_label_down, size=size.normal)
+    line.new(bar_index - 2, latest_low, bar_index, latest_low, color=color_bearish, width=1, style=line.style_dashed)
+
+if bullish_choch and liquidity_swept
+    label.new(bar_index, latest_high, "CH↑", color=color_bullish, textcolor=color.white, style=label.style_label_up, size=size.normal)
+    line.new(bar_index - 2, latest_high, bar_index, latest_high, color=color_bullish, width=1, style=line.style_dashed)
+
+// Displacement engine
+atr_value = ta.atr(atr_period)
+candle_body = math.abs(close - open)
+candle_range = high - low
+body_ratio = candle_range > 0 ? candle_body / candle_range : 0
+
+valid_bullish_disp = body_ratio > 0.6 and close > open and (close - open) > atr_value * min_displacement
+valid_bearish_disp = body_ratio > 0.6 and close < open and (open - close) > atr_value * min_displacement
+
+// Mark displacement
+if valid_bullish_disp
+    label.new(bar_index, low, "DIS↑", color=color_bullish, textcolor=color.white, style=label.style_label_up, size=size.small)
+
+if valid_bearish_disp
+    label.new(bar_index, high, "DIS↓", color=color_bearish, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// Execution zones
+execution_bullish = liquidity_swept and bullish_choch and valid_bullish_disp
+execution_bearish = liquidity_swept and bearish_choch and valid_bearish_disp
+
+// Mark execution zones
+if show_execution and execution_bullish
+    label.new(bar_index, low, "BUY\nZONE", color=color_execution, textcolor=color.white, style=label.style_label_up, size=size.large)
+
+if show_execution and execution_bearish
+    label.new(bar_index, high, "SELL\nZONE", color=color_execution, textcolor=color.white, style=label.style_label_down, size=size.large)
+
+// Plot liquidity levels
+plot(prior_day_high, "Prior Day High", show_liquidity ? color.new(color_liquidity, 70) : na, 1, plot.style_circles)
+plot(prior_day_low, "Prior Day Low", show_liquidity ? color.new(color_liquidity, 70) : na, 1, plot.style_circles)
+plot(session_high, "Session High", show_liquidity ? color.new(color_liquidity, 50) : na, 1, plot.style_circles)
+plot(session_low, "Session Low", show_liquidity ? color.new(color_liquidity, 50) : na, 1, plot.style_circles)
+
+// Session background colors
+bgcolor(show_sessions and london_session ? color.new(#FF9800, 85) : na)
+bgcolor(show_sessions and ny_session ? color.new(#2196F3, 85) : na)
+bgcolor(show_sessions and asian_session ? color.new(#9C27B0, 85) : na)
+
+// Current price position indicators
+plotshape(close >= prior_day_high, location=location.absolute, color=color.green, style=shape.triangleup, size=size.small)
+plotshape(close <= prior_day_low, location=location.absolute, color=color.red, style=shape.triangledown, size=size.small)
+
+// Info label
+if barstate.islast
+    session_text = "CALC: " + str.tostring(hour_utc) + ":00"
+    if show_sessions
+        if london_session
+            session_text := "LONDON (7-16 UTC)"
+        else if ny_session
+            session_text := "NY (13-22 UTC)"
+        else if asian_session
+            session_text := "ASIAN (22-7 UTC)"
+        else
+            session_text := "BETWEEN SESSIONS"
+    
+    label_text = "FX/CRYPTO SCALPER\n" + "Session: " + session_text + "\n" + "ATR: " + str.tostring(atr_value, "#.#####") + "\n" + "PD High: " + str.tostring(prior_day_high, "#.#####") + "\n" + "PD Low: " + str.tostring(prior_day_low, "#.#####")
+    
+    label_color = color.gray
+    if show_sessions and london_session
+        label_color := color.new(#FF9800, 80)
+    else if show_sessions and ny_session
+        label_color := color.new(#2196F3, 80)
+    else if show_sessions and asian_session
+        label_color := color.new(#9C27B0, 80)
+    
+    label.new(bar_index, high, label_text, color=label_color, textcolor=color.white, style=label.style_label_down, yloc=yloc.abovebar, size=size.normal)
+
+// Alerts
+alertcondition(execution_bullish, "Bullish Execution", "BUY ZONE detected")
+alertcondition(execution_bearish, "Bearish Execution", "SELL ZONE detected")
+
