@@ -1,0 +1,53 @@
+//@version=5
+indicator("Prabhat SMC — MASTER EXECUTION MODEL", overlay=true, max_labels_count=100)
+
+// ===== INPUTS =====
+pivotLen = input.int(5, "Swing Length", minval=3)
+atrLen   = input.int(14, "ATR Length")
+dispMult = input.float(1.5, "Displacement Strength", step=0.1)
+
+// ===== ATR =====
+atr = ta.atr(atrLen)
+
+// ===== SWINGS =====
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float lastHigh = na
+var float lastLow  = na
+
+if not na(ph)
+    lastHigh := ph
+if not na(pl)
+    lastLow := pl
+
+// ===== TREND STATE =====
+var int trend = 0
+if trend == 0 and not na(lastHigh) and not na(lastLow)
+    trend := close > lastHigh ? 1 : -1
+
+// ===== CHoCH =====
+bullChoch = trend == -1 and not na(lastHigh) and close > lastHigh
+bearChoch = trend == 1 and not na(lastLow) and close < lastLow
+
+if bullChoch
+    trend := 1
+    label.new(bar_index, low, "MARKET BIAS → BULLISH", style=label.style_label_up, color=color.new(color.green, 10), textcolor=color.black)
+
+if bearChoch
+    trend := -1
+    label.new(bar_index, high, "MARKET BIAS → BEARISH", style=label.style_label_down, color=color.new(color.red, 10), textcolor=color.white)
+
+// ===== DISPLACEMENT =====
+bullDisp = close > open and (close - open) > atr * dispMult
+bearDisp = close < open and (open - close) > atr * dispMult
+
+// ===== MARKET READY STATE =====
+readyBull = trend == 1 and bullDisp
+readyBear = trend == -1 and bearDisp
+
+if readyBull
+    label.new(bar_index, low, "MARKET READY\nWait for Pullback Entry", style=label.style_label_up, color=color.green, textcolor=color.black)
+
+if readyBear
+    label.new(bar_index, high, "MARKET READY\nWait for Pullback Entry", style=label.style_label_down, color=color.red, textcolor=color.white)
