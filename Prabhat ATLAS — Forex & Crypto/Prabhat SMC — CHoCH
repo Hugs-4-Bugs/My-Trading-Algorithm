@@ -1,0 +1,84 @@
+//@version=5
+indicator("Prabhat SMC — CHoCH (Institutional Clean)", overlay=true, max_labels_count=100)
+
+// ===== INPUT =====
+pivotLen = input.int(5, "Swing Confirmation Length", minval=3)
+
+// ===== SWINGS =====
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float lastHigh = na
+var float lastLow  = na
+
+if not na(ph)
+    lastHigh := ph
+
+if not na(pl)
+    lastLow := pl
+
+// ===== TREND STATE =====
+//  1 = bullish, -1 = bearish
+var int trend = 0
+
+if trend == 0 and not na(lastHigh) and not na(lastLow)
+    trend := close > lastHigh ? 1 : -1
+
+// ===== CHoCH LOGIC =====
+bullChoch = trend == -1 and not na(lastHigh) and close > lastHigh
+bearChoch = trend == 1 and not na(lastLow) and close < lastLow
+
+// ===== EXECUTION (ONE LABEL PER SHIFT) =====
+if bullChoch
+    trend := 1
+    label.new(bar_index, low, "CHoCH | Bullish Structure Shift", style=label.style_label_up, color=color.green, textcolor=color.black, size=size.normal)
+
+if bearChoch
+    trend := -1
+    label.new(bar_index, high, "CHoCH | Bearish Structure Shift", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
+
+// ===== OPTIONAL VISUAL GUIDES =====
+plot(lastHigh, title="Last Swing High", color=color.new(color.red, 70), style=plot.style_linebr)
+plot(lastLow, title="Last Swing Low", color=color.new(color.green, 70), style=plot.style_linebr)
+
+
+
+
+
+
+
+
+// =====================================================
+// HOW TO USE THIS INDICATOR (BEGINNER GUIDE)
+// =====================================================
+//
+// 1️⃣ This indicator shows CHoCH (Change of Character)
+//    → It means MARKET DIRECTION HAS CHANGED
+//
+// 2️⃣ GREEN label = Bullish Structure Shift
+//    → Market bias changes from SELL to BUY
+//
+// 3️⃣ RED label = Bearish Structure Shift
+//    → Market bias changes from BUY to SELL
+//
+// 4️⃣ CHoCH is NOT an entry signal
+//    → It only tells you WHICH DIRECTION to trade
+//
+// 5️⃣ After CHoCH, wait for:
+//    - Pullback
+//    - Order Block
+//    - Fair Value Gap
+//    - Liquidity Sweep
+//
+// 6️⃣ Trade ONLY in direction of latest CHoCH
+//
+// 7️⃣ Ignore all old structure BEFORE latest CHoCH
+//
+// RULE:
+// ❌ No trade against CHoCH
+// ✅ Trade with structure only
+//
+// Think like institutions:
+// Structure → Liquidity → Entry
+//
+// =====================================================
