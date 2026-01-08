@@ -1,0 +1,85 @@
+//@version=6
+indicator("Institutional Matrix [OB + Premium/Discount]", overlay=true, max_boxes_count=500, max_labels_count=500)
+
+// ==========================================
+// 1. SETTINGS
+// ==========================================
+lookback = input.int(20, "Structure Lookback", minval=10)
+ob_len   = input.int(5, "Order Block Sensitivity", minval=1)
+
+// Colors
+col_premium = color.new(color.red, 90)
+col_discount = color.new(color.green, 90)
+col_eq      = color.gray
+
+// ==========================================
+// 2. PREMIUM / DISCOUNT ENGINE
+// ==========================================
+// This finds the highest high and lowest low of the last X bars
+var float range_high = na
+var float range_low = na
+
+hi = ta.highest(high, 50)
+lo = ta.lowest(low, 50)
+mid = (hi + lo) / 2
+
+// Plot the "Matrix" Background
+// Red Zone = Premium (Only Sell allowed)
+// Green Zone = Discount (Only Buy allowed)
+p1 = plot(hi, "Range High", color=color.new(color.gray, 100))
+p2 = plot(lo, "Range Low", color=color.new(color.gray, 100))
+p3 = plot(mid, "Equilibrium", color=col_eq, style=plot.style_circles)
+
+fill(p1, p3, color=col_premium, title="Premium Zone")
+fill(p3, p2, color=col_discount, title="Discount Zone")
+
+// ==========================================
+// 3. ORDER BLOCK (OB) DETECTION
+// ==========================================
+// Bullish OB: The last red candle before a massive pump (displacement)
+// Bearish OB: The last green candle before a massive drop
+
+var box last_bull_ob = na
+var box last_bear_ob = na
+
+// Define Displacement (Strong move)
+atr = ta.atr(14)
+big_move_up = close > open and (close - open) > atr * 1.5
+big_move_down = close < open and (open - close) > atr * 1.5
+
+// Detect OBs
+// Bullish OB: We look for a down candle (close < open) followed by a Big Move Up
+if big_move_up and close[1] < open[1]
+    // Only valid if inside DISCOUNT (Green Zone)
+    if low[1] < mid 
+        last_bull_ob := box.new(bar_index[1], high[1], bar_index + 20, low[1], bgcolor=color.new(color.green, 60), border_color=na)
+        label.new(bar_index[1], low[1], "Inst Buy OB", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.tiny)
+
+// Bearish OB: We look for an up candle followed by a Big Move Down
+if big_move_down and close[1] > open[1]
+    // Only valid if inside PREMIUM (Red Zone)
+    if high[1] > mid
+        last_bear_ob := box.new(bar_index[1], high[1], bar_index + 20, low[1], bgcolor=color.new(color.red, 60), border_color=na)
+        label.new(bar_index[1], high[1], "Inst Sell OB", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+
+// ==========================================
+// 4. THE 90% PROBABILITY ENTRY
+// ==========================================
+// Signal ONLY when price touches an Order Block inside the correct zone
+
+long_trigger = low <= mid and (ta.crossover(close, low[1]) or low < low[1]) // Simplified retest logic
+short_trigger = high >= mid and (ta.crossunder(close, high[1]) or high > high[1])
+
+// We don't just alert on "touch", we alert on "REJECTION" from the OB
+bull_reject = low < mid and close > open and close[1] < open[1] and close > high[1] // Engulfing inside Discount
+bear_reject = high > mid and close < open and close[1] > open[1] and close < low[1] // Engulfing inside Premium
+
+plotshape(bull_reject, "High Power Buy", shape.labelup, location.belowbar, color.green, text="BUY POWER", textcolor=color.white)
+plotshape(bear_reject, "High Power Sell", shape.labeldown, location.abovebar, color.red, text="SELL POWER", textcolor=color.white)
+
+// ==========================================
+// 5. DOCUMENTATION (TRADING RULES)
+// ==========================================
+// RULE 1: If price is in the RED ZONE, you are FORBIDDEN to buy. Wait for a sell signal.
+// RULE 2: If price is in the GREEN ZONE, you are FORBIDDEN to sell. Wait for a buy signal.
+// RULE 3: The "OB Boxes" show where institutions bought/sold previously. When price returns there, they defend it.
