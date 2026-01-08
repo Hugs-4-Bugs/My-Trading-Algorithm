@@ -1,0 +1,51 @@
+//@version=5
+indicator("Prabhat SMC — Execution Model (CHoCH + Displacement)", overlay=true, max_labels_count=100)
+
+// ===== INPUTS =====
+pivotLen = input.int(5, "Swing Length", minval=3)
+atrLen   = input.int(14, "ATR Length")
+dispMult = input.float(1.5, "Displacement Strength (ATR)", step=0.1)
+
+// ===== ATR =====
+atr = ta.atr(atrLen)
+
+// ===== SWINGS =====
+ph = ta.pivothigh(high, pivotLen, pivotLen)
+pl = ta.pivotlow(low, pivotLen, pivotLen)
+
+var float lastHigh = na
+var float lastLow  = na
+
+if not na(ph)
+    lastHigh := ph
+if not na(pl)
+    lastLow := pl
+
+// ===== TREND STATE =====
+var int trend = 0
+if trend == 0 and not na(lastHigh) and not na(lastLow)
+    trend := close > lastHigh ? 1 : -1
+
+// ===== CHoCH =====
+bullChoch = trend == -1 and not na(lastHigh) and close > lastHigh
+bearChoch = trend == 1 and not na(lastLow) and close < lastLow
+
+if bullChoch
+    trend := 1
+if bearChoch
+    trend := -1
+
+// ===== DISPLACEMENT =====
+bullDisplacement = close > open and (close - open) > atr * dispMult
+bearDisplacement = close < open and (open - close) > atr * dispMult
+
+// ===== EXECUTION SIGNAL (FILTERED) =====
+bullExec = trend == 1 and bullDisplacement
+bearExec = trend == -1 and bearDisplacement
+
+// ===== LABELS (ONE LINE ONLY) =====
+if bullExec
+    label.new(bar_index, low, "EXECUTION CONFIRMED\nBullish Displacement", style=label.style_label_up, color=color.green, textcolor=color.black, size=size.normal)
+
+if bearExec
+    label.new(bar_index, high, "EXECUTION CONFIRMED\nBearish Displacement", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
