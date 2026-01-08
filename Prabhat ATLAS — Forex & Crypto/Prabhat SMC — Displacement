@@ -1,0 +1,47 @@
+//@version=5
+indicator("Prabhat SMC — Displacement (Institutional)", overlay=true, max_labels_count=300)
+
+// ================= INPUTS =================
+atrLen      = input.int(14, "ATR Length")
+atrMult     = input.float(1.2, "ATR Expansion Multiplier", step=0.1)
+bodyPctMin  = input.float(0.65, "Min Body % of Candle", step=0.05)
+structLen   = input.int(5, "Micro Structure Lookback", minval=2)
+
+// ================= CORE =================
+atr = ta.atr(atrLen)
+
+body        = math.abs(close - open)
+candleRange = high - low
+bodyPct     = candleRange > 0 ? body / candleRange : 0.0
+
+bullCloseStrong = close >= high - candleRange * 0.2
+bearCloseStrong = close <= low  + candleRange * 0.2
+
+breakHigh = close > ta.highest(high, structLen)[1]
+breakLow  = close < ta.lowest(low, structLen)[1]
+
+// ================= DISPLACEMENT LOGIC =================
+bullDisplacement =
+     close > open and
+     body >= atr * atrMult and
+     bodyPct >= bodyPctMin and
+     bullCloseStrong and
+     breakHigh
+
+bearDisplacement =
+     close < open and
+     body >= atr * atrMult and
+     bodyPct >= bodyPctMin and
+     bearCloseStrong and
+     breakLow
+
+// ================= VISUALS =================
+plotshape(bullDisplacement, title="Bullish Displacement", style=shape.square, location=location.belowbar, color=color.lime, size=size.tiny)
+plotshape(bearDisplacement, title="Bearish Displacement", style=shape.square, location=location.abovebar, color=color.red, size=size.tiny)
+
+// ================= TEXT LABELS (ONE LINE ONLY) =================
+if bullDisplacement
+    label.new(bar_index, low, "DISPLACEMENT\nBullish Impulse", style=label.style_label_up, color=color.lime, textcolor=color.black, size=size.small)
+
+if bearDisplacement
+    label.new(bar_index, high, "DISPLACEMENT\nBearish Impulse", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
