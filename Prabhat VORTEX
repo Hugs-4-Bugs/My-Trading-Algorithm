@@ -1,0 +1,88 @@
+//@version=5
+indicator("Prabhat VORTEX ULTIMATE", overlay=true)
+
+// ================= INPUTS =================
+fastEmaLen = input.int(9, "Fast EMA")
+slowEmaLen = input.int(21, "Slow EMA")
+
+rsiLen = input.int(14, "RSI Length")
+rsiLong = input.int(52, "RSI Long Min")
+rsiShort = input.int(48, "RSI Short Max")
+
+atrLen = input.int(14, "ATR Length")
+compressionF = input.float(0.7, "ATR Compression")
+expansionF = input.float(1.2, "ATR Expansion")
+
+trapLookback = input.int(20, "Trap Lookback")
+strikeGap = input.int(30, "ATM Proximity")
+
+slATR = input.float(1.0, "SL ATR")
+tpATR = input.float(2.0, "TP ATR")
+
+// ================= CORE =================
+emaFast = ta.ema(close, fastEmaLen)
+emaSlow = ta.ema(close, slowEmaLen)
+
+trendUp = emaFast > emaSlow
+trendDn = emaFast < emaSlow
+
+rsiVal = ta.rsi(close, rsiLen)
+vwapVal = ta.vwap
+
+atrVal = ta.atr(atrLen)
+avgATR = ta.sma(atrVal, 20)
+
+// ================= TRAP =================
+rangeHigh = ta.highest(high, trapLookback)
+rangeLow = ta.lowest(low, trapLookback)
+rangeSize = rangeHigh - rangeLow
+
+isCompressed = atrVal < avgATR * compressionF and rangeSize < avgATR * 1.5
+isExpansion = math.abs(close - open) > atrVal * expansionF
+
+nearestStrike = math.round(close / 100) * 100
+nearATM = math.abs(close - nearestStrike) <= strikeGap
+
+trapZone = isCompressed and nearATM
+
+// ================= OBV =================
+obv = ta.cum(volume * math.sign(ta.change(close)))
+obvSlope = ta.linreg(obv, 20, 0) - ta.linreg(obv, 20, 1)
+
+// ================= BIAS =================
+bullBias = trendUp and close > vwapVal and rsiVal > rsiLong and obvSlope > 0
+bearBias = trendDn and close < vwapVal and rsiVal < rsiShort and obvSlope < 0
+
+// ================= SIGNALS =================
+longSignal = bullBias and isExpansion and not trapZone
+shortSignal = bearBias and isExpansion and not trapZone
+
+// ================= SL / TP =================
+longSL = longSignal ? close - atrVal * slATR : na
+longTP = longSignal ? close + atrVal * tpATR : na
+shortSL = shortSignal ? close + atrVal * slATR : na
+shortTP = shortSignal ? close - atrVal * tpATR : na
+
+// ================= ALERTS =================
+alertcondition(trapZone, "TRAP", "TRAP ZONE. NO TRADE.")
+alertcondition(trapZone and isExpansion, "GAMMA", "GAMMA EXPANSION POSSIBLE.")
+alertcondition(longSignal, "BUY", "BUY SIGNAL.")
+alertcondition(shortSignal, "SELL", "SELL SIGNAL.")
+
+// ================= PLOTS =================
+plot(emaFast, color=color.green)
+plot(emaSlow, color=color.red)
+plot(vwapVal, color=color.blue)
+
+plot(trapZone ? rangeHigh : na, color=color.orange)
+plot(trapZone ? rangeLow : na, color=color.orange)
+
+plotshape(longSignal, style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(shortSignal, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
+
+// ================= LABELS (CORRECT SYNTAX) =================
+if longSignal
+    label.new(bar_index, low, "BUY | Gamma Expansion", style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
+
+if shortSignal
+    label.new(bar_index, high, "SELL | Gamma Expansion", style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
