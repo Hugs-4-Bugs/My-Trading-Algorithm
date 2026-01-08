@@ -1,0 +1,487 @@
+//@version=6
+indicator("Forex/Crypto Structure & Liquidity Scalper", overlay=true, max_labels_count=500, max_lines_count=500)
+
+// ═══════════════════════════════════════════════════════════════════
+// INSTITUTIONAL FOREX/CRYPTO SCALPING INDICATOR
+// Built for: Fast markets, intraday structure, momentum + mean reversion
+// Philosophy: Liquidity → Structure → Momentum → Execute
+// ═══════════════════════════════════════════════════════════════════
+
+// ─────────────────────────────────────────────────────────────────
+// INPUT SETTINGS
+// ─────────────────────────────────────────────────────────────────
+swingLength = input.int(5, "Swing Detection Length", minval=3, maxval=15, 
+     tooltip="Lower = Faster signals. Forex/Crypto: 5-7 optimal for scalping")
+atrLength = input.int(14, "ATR Length", minval=10, maxval=30)
+displacementMultiplier = input.float(1.5, "Displacement ATR Multiplier", minval=1.0, maxval=3.0, step=0.1,
+     tooltip="How many ATRs = displacement. 1.5-2.0 for scalping")
+minBodyPercent = input.float(60, "Min Body % for Displacement", minval=50, maxval=90,
+     tooltip="Body must be X% of candle for valid displacement")
+
+// Session Filters
+enableSessionFilter = input.bool(false, "Enable Session Filter")
+londonSession = input.bool(true, "Trade London Session (08:00-16:00 GMT)")
+nySession = input.bool(true, "Trade NY Session (13:00-21:00 GMT)")
+
+// Visual Controls
+showLiquidity = input.bool(true, "Show Liquidity Zones")
+showStructure = input.bool(true, "Show Structure Lines")
+showExecutions = input.bool(true, "Show Execution Signals")
+
+// ─────────────────────────────────────────────────────────────────
+// SESSION DETECTION
+// ─────────────────────────────────────────────────────────────────
+hourGMT = hour(time, "GMT")
+
+inLondonSession = hourGMT >= 8 and hourGMT < 16
+inNYSession = hourGMT >= 13 and hourGMT < 21
+inAsianSession = not inLondonSession and not inNYSession
+
+// Determine if we're in tradeable session
+tradeableSession = true
+if enableSessionFilter
+    tradeableSession := (londonSession and inLondonSession) or (nySession and inNYSession)
+
+// ─────────────────────────────────────────────────────────────────
+// MODULE 1: FAST STRUCTURE ENGINE
+// ─────────────────────────────────────────────────────────────────
+
+// Detect swings - faster than Indian markets but not noise
+isSwingHigh = ta.pivothigh(high, swingLength, swingLength)
+isSwingLow = ta.pivotlow(low, swingLength, swingLength)
+
+// Store structure state
+var float lastSwingHigh = na
+var float lastSwingLow = na
+var int lastSwingHighBar = na
+var int lastSwingLowBar = na
+var int structureDirection = 0  // 1=BULLISH, -1=BEARISH, 0=NEUTRAL
+
+// Update swing points
+if not na(isSwingHigh)
+    lastSwingHigh := high[swingLength]
+    lastSwingHighBar := bar_index - swingLength
+    
+if not na(isSwingLow)
+    lastSwingLow := low[swingLength]
+    lastSwingLowBar := bar_index - swingLength
+
+// Determine current structure direction
+if not na(lastSwingHigh) and not na(lastSwingLow)
+    if lastSwingHighBar > lastSwingLowBar and close > lastSwingLow
+        structureDirection := 1
+    else if lastSwingLowBar > lastSwingHighBar and close < lastSwingHigh
+        structureDirection := -1
+    else
+        structureDirection := 0
+
+// Draw structure lines (dynamic, adapts to volatility)
+if showStructure and not na(lastSwingHigh) and not na(lastSwingLow)
+    if lastSwingHighBar > lastSwingLowBar
+        line.new(lastSwingHighBar, lastSwingHigh, bar_index, lastSwingHigh, 
+             color=color.new(#ef5350, 60), width=1, style=line.style_solid)
+    else
+        line.new(lastSwingLowBar, lastSwingLow, bar_index, lastSwingLow, 
+             color=color.new(#26a69a, 60), width=1, style=line.style_solid)
+
+// ─────────────────────────────────────────────────────────────────
+// MODULE 2: LIQUIDITY DETECTION (FOREX/CRYPTO STYLE)
+// ─────────────────────────────────────────────────────────────────
+
+// ATR for dynamic thresholds
+atr = ta.atr(atrLength)
+
+// Track recent highs/lows for liquidity pools
+var float[] recentHighs = array.new_float(0)
+var float[] recentLows = array.new_float(0)
+var int[] recentHighBars = array.new_int(0)
+var int[] recentLowBars = array.new_int(0)
+
+// Add new swing points to liquidity tracking
+if not na(isSwingHigh)
+    array.push(recentHighs, high[swingLength])
+    array.push(recentHighBars, bar_index - swingLength)
+    if array.size(recentHighs) > 10
+        array.shift(recentHighs)
+        array.shift(recentHighBars)
+
+if not na(isSwingLow)
+    array.push(recentLows, low[swingLength])
+    array.push(recentLowBars, bar_index - swingLength)
+    if array.size(recentLows) > 10
+        array.shift(recentLows)
+        array.shift(recentLowBars)
+
+// Detect equal highs/lows (within 0.1% tolerance - key liquidity zones)
+tolerance = close * 0.001
+var float equalHighLevel = na
+var float equalLowLevel = na
+
+// Check for equal highs
+if array.size(recentHighs) >= 2
+    lastHigh = array.get(recentHighs, array.size(recentHighs) - 1)
+    for i = 0 to array.size(recentHighs) - 2
+        if math.abs(lastHigh - array.get(recentHighs, i)) < tolerance
+            equalHighLevel := lastHigh
+            break
+
+// Check for equal lows
+if array.size(recentLows) >= 2
+    lastLow = array.get(recentLows, array.size(recentLows) - 1)
+    for i = 0 to array.size(recentLows) - 2
+        if math.abs(lastLow - array.get(recentLows, i)) < tolerance
+            equalLowLevel := lastLow
+            break
+
+// Draw liquidity zones
+if showLiquidity
+    // Equal highs (strong liquidity)
+    if not na(equalHighLevel)
+        line.new(bar_index - 20, equalHighLevel, bar_index, equalHighLevel,
+             color=color.new(#ff6b6b, 70), width=2, style=line.style_dotted, extend=extend.right)
+    
+    // Equal lows (strong liquidity)
+    if not na(equalLowLevel)
+        line.new(bar_index - 20, equalLowLevel, bar_index, equalLowLevel,
+             color=color.new(#51cf66, 70), width=2, style=line.style_dotted, extend=extend.right)
+
+// ─────────────────────────────────────────────────────────────────
+// LIQUIDITY SWEEP DETECTION
+// ─────────────────────────────────────────────────────────────────
+
+var bool liquiditySweepHigh = false
+var bool liquiditySweepLow = false
+var bool strongSweepHigh = false
+var bool strongSweepLow = false
+
+liquiditySweepHigh := false
+liquiditySweepLow := false
+strongSweepHigh := false
+strongSweepLow := false
+
+// Detect sweeps of recent highs
+if array.size(recentHighs) > 0
+    for i = 0 to array.size(recentHighs) - 1
+        liqLevel = array.get(recentHighs, i)
+        if high > liqLevel and close < liqLevel  // Wick above, close below = sweep
+            liquiditySweepHigh := true
+            // Strong sweep = big wick + strong reversal
+            wickSize = high - math.max(open, close)
+            bodySize = math.abs(close - open)
+            if wickSize > atr * 0.5 and close < open and bodySize > atr * 0.3
+                strongSweepHigh := true
+                if showLiquidity
+                    label.new(bar_index, high, "💀 SWEEP\nStops taken", 
+                         style=label.style_label_down, color=color.new(#ef5350, 20), 
+                         textcolor=color.white, size=size.small)
+            break
+
+// Detect sweeps of recent lows
+if array.size(recentLows) > 0
+    for i = 0 to array.size(recentLows) - 1
+        liqLevel = array.get(recentLows, i)
+        if low < liqLevel and close > liqLevel  // Wick below, close above = sweep
+            liquiditySweepLow := true
+            // Strong sweep = big wick + strong reversal
+            wickSize = math.min(open, close) - low
+            bodySize = math.abs(close - open)
+            if wickSize > atr * 0.5 and close > open and bodySize > atr * 0.3
+                strongSweepLow := true
+                if showLiquidity
+                    label.new(bar_index, low, "💀 SWEEP\nStops taken", 
+                         style=label.style_label_up, color=color.new(#26a69a, 20), 
+                         textcolor=color.white, size=size.small)
+            break
+
+// Mark weak sweeps (just dots)
+plotshape(liquiditySweepHigh and not strongSweepHigh, "Weak Sweep High", 
+     shape.circle, location.abovebar, color.new(#ef5350, 50), size=size.tiny)
+plotshape(liquiditySweepLow and not strongSweepLow, "Weak Sweep Low", 
+     shape.circle, location.belowbar, color.new(#26a69a, 50), size=size.tiny)
+
+// ─────────────────────────────────────────────────────────────────
+// MODULE 3: CHoCH (CONTROLLED - AFTER LIQUIDITY)
+// ─────────────────────────────────────────────────────────────────
+
+var bool chochDetected = false
+var int chochDirection = 0  // 1=BULLISH, -1=BEARISH
+var int barsSinceChoch = 999
+
+chochDetected := false
+barsSinceChoch += 1
+
+// CHoCH ONLY after liquidity sweep and structure break
+// This prevents random CHoCH spam
+
+if structureDirection == 1  // Was bullish
+    // Bearish CHoCH: Break swing low AFTER liquidity sweep
+    if not na(lastSwingLow) and close < lastSwingLow and barsSinceChoch > 10
+        if liquiditySweepHigh[1] or liquiditySweepHigh[2] or liquiditySweepHigh[3]  // Recent sweep
+            chochDetected := true
+            chochDirection := -1
+            structureDirection := -1
+            barsSinceChoch := 0
+            
+            label.new(bar_index, high, "CHoCH ↓\nBearish flip", 
+                 style=label.style_label_down, color=color.new(#ef5350, 10), 
+                 textcolor=color.white, size=size.normal)
+
+else if structureDirection == -1  // Was bearish
+    // Bullish CHoCH: Break swing high AFTER liquidity sweep
+    if not na(lastSwingHigh) and close > lastSwingHigh and barsSinceChoch > 10
+        if liquiditySweepLow[1] or liquiditySweepLow[2] or liquiditySweepLow[3]  // Recent sweep
+            chochDetected := true
+            chochDirection := 1
+            structureDirection := 1
+            barsSinceChoch := 0
+            
+            label.new(bar_index, low, "CHoCH ↑\nBullish flip", 
+                 style=label.style_label_up, color=color.new(#26a69a, 10), 
+                 textcolor=color.white, size=size.normal)
+
+// ─────────────────────────────────────────────────────────────────
+// MODULE 4: DISPLACEMENT (ATR-BASED, BODY-DOMINANT)
+// ─────────────────────────────────────────────────────────────────
+
+// Calculate candle properties
+barRange = high - low
+bodySize = math.abs(close - open)
+bodyPercent = (bodySize / barRange) * 100
+
+// Displacement criteria (strict for quality)
+isDisplacement = false
+displacementDirection = 0
+
+if barRange > atr * displacementMultiplier and bodyPercent >= minBodyPercent
+    isDisplacement := true
+    displacementDirection := close > open ? 1 : -1
+
+// Visual displacement marker
+bgcolor(isDisplacement ? (displacementDirection == 1 ? 
+     color.new(#26a69a, 92) : color.new(#ef5350, 92)) : na,
+     title="Displacement")
+
+// ─────────────────────────────────────────────────────────────────
+// MODULE 5: EXECUTION MODEL (HOLY GRAIL CONFLUENCE)
+// ─────────────────────────────────────────────────────────────────
+
+// EXECUTION = Liquidity Sweep → CHoCH → Displacement → Session
+// All must align within 5 bars
+
+var bool executionLong = false
+var bool executionShort = false
+
+executionLong := false
+executionShort := false
+
+// LONG EXECUTION
+if tradeableSession and barsSinceChoch <= 5
+    if chochDirection == 1  // Bullish CHoCH
+        // Check for displacement confirmation
+        if isDisplacement and displacementDirection == 1
+            // Check recent liquidity sweep
+            recentSweep = false
+            for i = 0 to 5
+                if liquiditySweepLow[i] or strongSweepLow[i]
+                    recentSweep := true
+                    break
+            
+            if recentSweep
+                executionLong := true
+
+// SHORT EXECUTION
+if tradeableSession and barsSinceChoch <= 5
+    if chochDirection == -1  // Bearish CHoCH
+        // Check for displacement confirmation
+        if isDisplacement and displacementDirection == -1
+            // Check recent liquidity sweep
+            recentSweep = false
+            for i = 0 to 5
+                if liquiditySweepHigh[i] or strongSweepHigh[i]
+                    recentSweep := true
+                    break
+            
+            if recentSweep
+                executionShort := true
+
+// Mark EXECUTION signals (RARE - this is the money maker)
+if showExecutions and executionLong
+    label.new(bar_index, low, "🎯 LONG\nAll systems go", 
+         style=label.style_label_up, color=color.new(#26a69a, 0), 
+         textcolor=color.white, size=size.large)
+    line.new(bar_index, low, bar_index, high, color=color.new(#26a69a, 30), width=3)
+
+if showExecutions and executionShort
+    label.new(bar_index, high, "🎯 SHORT\nAll systems go", 
+         style=label.style_label_down, color=color.new(#ef5350, 0), 
+         textcolor=color.white, size=size.large)
+    line.new(bar_index, low, bar_index, high, color=color.new(#ef5350, 30), width=3)
+
+// ─────────────────────────────────────────────────────────────────
+// VISUAL BIAS INDICATOR
+// ─────────────────────────────────────────────────────────────────
+
+biasText = structureDirection == 1 ? "BULLISH" : structureDirection == -1 ? "BEARISH" : "NEUTRAL"
+biasColor = structureDirection == 1 ? color.new(#26a69a, 70) : 
+     structureDirection == -1 ? color.new(#ef5350, 70) : color.new(color.gray, 80)
+
+sessionText = inLondonSession ? " | LONDON" : inNYSession ? " | NEW YORK" : " | ASIAN"
+
+var table biasTable = table.new(position.top_right, 1, 2)
+table.cell(biasTable, 0, 0, biasText + sessionText, 
+     bgcolor=biasColor, text_color=color.white, text_size=size.normal)
+table.cell(biasTable, 0, 1, "Bars since CHoCH: " + str.tostring(barsSinceChoch), 
+     bgcolor=color.new(color.gray, 80), text_color=color.white, text_size=size.small)
+
+// ─────────────────────────────────────────────────────────────────
+// ALERTS
+// ─────────────────────────────────────────────────────────────────
+
+alertcondition(strongSweepHigh or strongSweepLow, "Strong Liquidity Sweep", 
+     "Strong liquidity sweep detected - Watch for CHoCH")
+alertcondition(chochDetected, "CHoCH Detected", 
+     "Change of Character detected - Wait for displacement")
+alertcondition(executionLong, "LONG EXECUTION", 
+     "LONG setup complete - Liquidity + CHoCH + Displacement aligned")
+alertcondition(executionShort, "SHORT EXECUTION", 
+     "SHORT setup complete - Liquidity + CHoCH + Displacement aligned")
+
+// ═══════════════════════════════════════════════════════════════════
+// FOREX/CRYPTO SCALPING PHILOSOPHY & WORKFLOW
+// ═══════════════════════════════════════════════════════════════════
+//
+// WHY THIS APPROACH WORKS IN FAST MARKETS:
+//
+// ─────────────────────────────────────────────────────────────────
+// 1. LIQUIDITY IS EVERYTHING
+// ─────────────────────────────────────────────────────────────────
+// • Stop-hunts happen CONSTANTLY in forex/crypto
+// • Market makers sweep stops before real moves
+// • Equal highs/lows = guaranteed liquidity pools
+// • Smart money takes stops, then moves price
+//
+// How to use:
+// → Wait for liquidity sweep (wick reversal)
+// → Strong sweeps (labeled) = high probability
+// → Weak sweeps (dots) = be cautious
+//
+// ─────────────────────────────────────────────────────────────────
+// 2. STRUCTURE CONFIRMS DIRECTION
+// ─────────────────────────────────────────────────────────────────
+// • Structure shows current flow
+// • CHoCH = structure is changing
+// • But CHoCH alone ≠ trade
+// • Need liquidity + CHoCH + displacement
+//
+// How to read:
+// → Green line = bullish structure (higher lows holding)
+// → Red line = bearish structure (lower highs holding)
+// → No line = neutral (range/chop)
+//
+// ─────────────────────────────────────────────────────────────────
+// 3. DISPLACEMENT = INTENT
+// ─────────────────────────────────────────────────────────────────
+// • Big body candles = momentum
+// • Wick-only moves = fake outs
+// • Must be 1.5x ATR minimum
+// • Body must be 60%+ of candle
+//
+// Why this matters:
+// → Filters out random volatility
+// → Confirms smart money is moving
+// → Displacement without sweep = risky
+// → Displacement after sweep = golden
+//
+// ─────────────────────────────────────────────────────────────────
+// 4. THE EXECUTION WORKFLOW (STEP BY STEP)
+// ─────────────────────────────────────────────────────────────────
+//
+// Step 1: WAIT for liquidity sweep
+//    → See "💀 SWEEP" label or orange dot
+//    → Strong sweep (label) is better
+//    → This means stops were taken
+//
+// Step 2: WATCH for CHoCH
+//    → "CHoCH ↑" or "CHoCH ↓" appears
+//    → Structure has flipped
+//    → But DON'T enter yet
+//
+// Step 3: CONFIRM with displacement
+//    → See colored background (displacement)
+//    → Body-dominant candle in CHoCH direction
+//    → This confirms intent
+//
+// Step 4: EXECUTE when aligned
+//    → "🎯 LONG" or "🎯 SHORT" signal
+//    → All three elements aligned
+//    → This is your entry
+//
+// Step 5: MANAGE the trade
+//    → Stop below/above last swing
+//    → Target: next liquidity pool
+//    → Trail after 1:1 or 1.5:1
+//
+// ─────────────────────────────────────────────────────────────────
+// 5. SESSION AWARENESS
+// ─────────────────────────────────────────────────────────────────
+// • London (8-16 GMT) = High volatility, best setups
+// • NY (13-21 GMT) = Momentum continuation
+// • Asian (rest) = Range-bound, mean reversion only
+//
+// Enable session filter if you want to avoid Asian chop
+//
+// ─────────────────────────────────────────────────────────────────
+// 6. WHAT NOT TO DO (CRITICAL)
+// ─────────────────────────────────────────────────────────────────
+// ❌ Don't trade every liquidity sweep
+// ❌ Don't enter on CHoCH without displacement
+// ❌ Don't chase after execution signal appears
+// ❌ Don't overtrade - quality > quantity
+// ❌ Don't ignore session context
+// ❌ Don't trade during major news (wait 30min)
+//
+// ─────────────────────────────────────────────────────────────────
+// 7. REALISTIC EXPECTATIONS
+// ─────────────────────────────────────────────────────────────────
+// • Execution signals = 2-5 per day on 5-15min TF
+// • Win rate = 60-70% if you follow rules
+// • Risk:Reward = 1:2 minimum (always)
+// • Some days = 0 signals (that's GOOD)
+// • Overtrading = biggest killer
+//
+// ─────────────────────────────────────────────────────────────────
+// 8. TIMEFRAME RECOMMENDATIONS
+// ─────────────────────────────────────────────────────────────────
+// • 5min = Scalping (quick in/out)
+// • 15min = Intraday structure
+// • 1H = Swing context
+// • Use higher TF for bias, lower TF for execution
+//
+// ─────────────────────────────────────────────────────────────────
+// 9. RISK MANAGEMENT (NON-NEGOTIABLE)
+// ─────────────────────────────────────────────────────────────────
+// • Risk 1% per trade maximum
+// • Stop loss = last swing high/low
+// • Target = 2x risk minimum
+// • If 2 losses in a row = STOP for 1 hour
+// • If 3 losses in a row = STOP for the day
+//
+// ─────────────────────────────────────────────────────────────────
+// 10. THE MINDSET
+// ─────────────────────────────────────────────────────────────────
+// This indicator shows you WHERE the money is (liquidity),
+// WHEN it's moving (CHoCH), and HOW STRONG it's moving (displacement).
+//
+// Your job:
+// → Wait patiently
+// → Execute confidently
+// → Manage ruthlessly
+// → Accept that most setups will NOT trigger
+//
+// Remember: You're not trying to catch every move.
+// You're waiting for the market to show its hand,
+// then taking advantage when all stars align.
+//
+// That's institutional trading.
+//
+// ═══════════════════════════════════════════════════════════════════
