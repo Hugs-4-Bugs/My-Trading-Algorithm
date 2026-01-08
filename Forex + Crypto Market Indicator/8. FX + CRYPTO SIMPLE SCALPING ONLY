@@ -1,0 +1,26 @@
+//@version=6
+indicator("FX/CRYPTO SIMPLE", overlay=true)
+
+// Just show key levels
+prior_day_high = request.security(syminfo.tickerid, "D", high[1])
+prior_day_low = request.security(syminfo.tickerid, "D", low[1])
+
+plot(prior_day_high, "PD High", color.orange, 1, plot.style_circles)
+plot(prior_day_low, "PD Low", color.orange, 1, plot.style_circles)
+
+// Show swings
+pivot_h = ta.pivothigh(3, 3)
+pivot_l = ta.pivotlow(3, 3)
+
+plotshape(pivot_h, "High", shape.triangledown, location.abovebar, color.red, size=size.small)
+plotshape(pivot_l, "Low", shape.triangleup, location.belowbar, color.green, size=size.small)
+
+// Simple info
+if barstate.islast
+    label.new(bar_index, high, 
+             "FX/CRYPTO STRUCTURE\n" +
+             "PD High: " + str.tostring(prior_day_high) + "\n" +
+             "PD Low: " + str.tostring(prior_day_low), 
+             color=color.gray, textcolor=color.white, 
+             style=label.style_label_down, 
+             yloc=yloc.abovebar)
